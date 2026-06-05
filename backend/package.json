@@ -1,0 +1,30 @@
+{
+  "name": "boom-crash-data-acquisition",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Tick-level data acquisition for Deriv Boom 1000 and Crash 1000 synthetic indices",
+  "scripts": {
+    "list-symbols": "node scripts/list-symbols.js",
+    "download": "node scripts/download-ticks.js",
+    "verify": "node scripts/verify-data.js",
+    "collect-live": "node scripts/collect-live.js",
+    "analyze": "node scripts/analyze-ticks.js",
+    "backtest": "node scripts/run-backtest.js",
+    "optimize": "node scripts/run-optimization.js",
+    "optimize-stage": "node scripts/run-stage.js",
+    "validate": "node scripts/run-validation.js",
+    "live": "node index.js",
+    "production": "pm2 start ecosystem.config.js",
+    "production-stop": "pm2 stop boom-crash-bot",
+    "production-logs": "pm2 logs boom-crash-bot"
+  },
+  "dependencies": {
+    "@deriv/deriv-api": "^1.0.0",
+    "better-sqlite3": "^11.0.0",
+    "dotenv": "^16.0.0",
+    "winston": "^3.19.0",
+    "winston-daily-rotate-file": "^5.0.0",
+    "ws": "^8.0.0"
+  }
+}
