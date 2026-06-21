@@ -166,7 +166,7 @@ class RiskManager {
     this.dailyWins = stats.wins || 0;
     this.dailyLoss = Math.abs(stats.loss || 0);
     this.dailyPnL = stats.netPnl || 0;
-    this.consecutiveLosses = stats.consecutiveLosses || 0;
+    this.consecutiveLosses = Math.min(stats.consecutiveLosses || 0, (this.config.maxConsecutiveLosses || 5) - 1);
     this.currentBalance = this.startingBalance + (stats.netPnl || 0);
     this.logger.info('RiskManager', `Session restored: ${this.dailyTrades}t ${this.dailyWins}W PnL=${this.dailyPnL >= 0 ? '+' : ''}${this.dailyPnL.toFixed(2)} balance=${this.currentBalance.toFixed(2)}`);
   }
