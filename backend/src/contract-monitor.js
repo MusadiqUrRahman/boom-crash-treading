@@ -1,6 +1,7 @@
 class ContractMonitor {
-  constructor(logger) {
+  constructor(logger, allowEquals = false) {
     this.logger = logger;
+    this.allowEquals = allowEquals;
     this.activeContracts = new Map();
     this._contractIdCounter = 0;
     this._listeners = {};
@@ -17,17 +18,18 @@ class ContractMonitor {
     }
   }
 
-  startContract(contractId, entryPrice, entryTickIndex, durationTicks, direction, stake, payout, score, scoreComponents) {
+  startContract(contractId, entryPrice, entryTickIndex, durationTicks, direction, stake, payout, score, scoreComponents, contractType, stopLoss, takeProfit, entryEpoch, multiplier) {
     this._contractIdCounter++;
     const localId = `BC-${String(this._contractIdCounter).padStart(4, '0')}`;
 
+    const hasFixedDuration = durationTicks && durationTicks > 0;
     const contract = {
       contractId,
       localId,
       direction,
       entryPrice,
       entryTickIndex,
-      expiryTickIndex: entryTickIndex + durationTicks,
+      expiryTickIndex: hasFixedDuration ? entryTickIndex + durationTicks : null,
       currentTickIndex: entryTickIndex,
       stake,
       payout,
@@ -35,10 +37,17 @@ class ContractMonitor {
       scoreComponents,
       tickAtEntry: entryTickIndex,
       resolved: false,
+      contractType,
+      hasFixedDuration,
+      entryEpoch: entryEpoch || Math.floor(Date.now() / 1000),
     };
 
     this.activeContracts.set(localId, contract);
-    this.logger.info('ContractMonitor', `Contract ${localId} started: ${direction} entry=${entryPrice} duration=${durationTicks}t`);
+    if (hasFixedDuration) {
+      this.logger.info('ContractMonitor', `Contract ${localId} started: ${direction} type=${contractType} entry=${entryPrice} expiryTick=${entryTickIndex + durationTicks}`);
+    } else {
+      this.logger.info('ContractMonitor', `Contract ${localId} started: ${direction} type=${contractType} entry=${entryPrice} (open-ended)`);
+    }
     return localId;
   }
 
@@ -47,10 +56,41 @@ class ContractMonitor {
       if (contract.resolved) continue;
       contract.currentTickIndex = currentTickIndex;
 
-      if (currentTickIndex >= contract.expiryTickIndex) {
+      if (contract.hasFixedDuration && currentTickIndex >= contract.expiryTickIndex) {
         this._resolveContract(localId, contract, tick);
       }
     }
+  }
+
+  resolveContract(localId, result) {
+    const contract = this.activeContracts.get(localId);
+    if (!contract || contract.resolved) return;
+
+    contract.resolved = true;
+    this.logger.info('ContractMonitor', `Contract ${localId} RESOLVED via API: ${result.win ? 'WIN' : 'LOSS'} PnL=${result.pnl >= 0 ? '+' : ''}${result.pnl.toFixed(4)}`);
+
+    const fullResult = {
+      localId,
+      contractId: contract.contractId,
+      direction: contract.direction,
+      win: result.win,
+      pnl: result.pnl,
+      entryPrice: contract.entryPrice,
+      exitPrice: result.exitPrice || contract.entryPrice,
+      stake: contract.stake,
+      payout: result.exitPrice || contract.payout,
+      score: contract.score,
+      scoreComponents: contract.scoreComponents,
+      entryTickIndex: contract.entryTickIndex,
+      durationTicks: contract.currentTickIndex - contract.entryTickIndex,
+      contractType: contract.contractType,
+      exitReason: result.exitReason || null,
+      entryEpoch: contract.entryEpoch,
+      exitEpoch: Math.floor(Date.now() / 1000),
+    };
+
+    this.activeContracts.delete(localId);
+    this._emit('contractResolved', fullResult);
   }
 
   _resolveContract(localId, contract, currentTick) {
@@ -59,11 +99,10 @@ class ContractMonitor {
     let win;
 
     if (contract.direction === 'CALL') {
-      win = exitPrice >= contract.entryPrice;
+      win = this.allowEquals ? exitPrice >= contract.entryPrice : exitPrice > contract.entryPrice;
     } else {
-      win = exitPrice <= contract.entryPrice;
+      win = this.allowEquals ? exitPrice <= contract.entryPrice : exitPrice < contract.entryPrice;
     }
-
     const payoutRate = contract.payout ? (contract.payout - contract.stake) / contract.stake : 0;
     const pnl = win ? contract.stake * payoutRate : -contract.stake;
 
@@ -82,7 +121,11 @@ class ContractMonitor {
       score: contract.score,
       scoreComponents: contract.scoreComponents,
       entryTickIndex: contract.entryTickIndex,
-      durationTicks: contract.expiryTickIndex - contract.entryTickIndex,
+      durationTicks: contract.expiryTickIndex ? contract.expiryTickIndex - contract.entryTickIndex : contract.currentTickIndex - contract.entryTickIndex,
+      contractType: contract.contractType,
+      exitReason: 'TICK_RESOLVED',
+      entryEpoch: contract.entryEpoch,
+      exitEpoch: Math.floor(Date.now() / 1000),
     };
 
     this.activeContracts.delete(localId);

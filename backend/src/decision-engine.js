@@ -35,43 +35,46 @@ class DecisionEngine {
       return { action: 'SKIP', reason: riskCheck.reason };
     }
 
-    const result = computeScore(indicatorValues, this.config);
-    const { call, put, decision } = result;
+    const configWithDir = { ...this.config, direction: this.config.direction };
+    const result = computeScore(indicatorValues, configWithDir);
+    const { score, components, direction, enter } = result;
 
-    this.logger.info('DecisionEngine', `SCORE CALL=${call.total} PUT=${put.total} spread=${result.spread} threshold=${this.config.scoreThreshold}`);
+    this.logger.info('DecisionEngine', `SCORE=${score} direction=${direction} threshold=${this.config.scoreThreshold}`);
 
     if (this.config.debugScores) {
-      this.logger.debug('DecisionEngine', `CALL components: ${JSON.stringify(call.components)} PUT components: ${JSON.stringify(put.components)}`);
+      this.logger.debug('DecisionEngine', `Components: ${JSON.stringify(components)}`);
     }
 
-    if (!decision.enter) {
+    if (!enter) {
       return { action: 'SKIP', reason: 'no_signal' };
     }
 
     const price = tickBuffer.length > 0 ? tickBuffer[tickBuffer.length - 1].quote : null;
-    this.logger.info('DecisionEngine', `ENTER ${decision.direction} at ${price} (score=${decision.direction === 'CALL' ? call.total : put.total})`);
+    this.logger.info('DecisionEngine', `ENTER ${direction} at ${price} (score=${score})`);
 
     this._emit('enter', {
-      direction: decision.direction,
-      score: decision.direction === 'CALL' ? call.total : put.total,
-      scoreComponents: decision.direction === 'CALL' ? call.components : put.components,
+      direction,
+      score,
+      scoreComponents: components,
       price,
       tickIndex,
     });
 
-    return { action: 'ENTER', direction: decision.direction, score: decision.direction === 'CALL' ? call.total : put.total };
+    return { action: 'ENTER', direction, score };
   }
 
   startCooldown(tickIndex) {
-    const ticks = this.inCooldown ? this.config.cooldownTicks * 2 : this.config.cooldownTicks;
-    this.cooldownEnd = tickIndex + ticks;
+    this.cooldownEnd = tickIndex + this.config.cooldownTicks;
     this.inCooldown = true;
-    this.logger.info('DecisionEngine', `Cooldown started for ${ticks} ticks (ends at index ${this.cooldownEnd})`);
+    this.logger.info('DecisionEngine', `Cooldown started for ${this.config.cooldownTicks} ticks (ends at index ${this.cooldownEnd})`);
   }
 
-  setCooldownAfterLoss(lost) {
+  setCooldownAfterLoss(lost, tickIndex) {
     if (lost && this.config.lossCooldownMultiplier) {
+      const extended = Math.round(this.config.cooldownTicks * this.config.lossCooldownMultiplier);
+      this.cooldownEnd = tickIndex + extended;
       this.inCooldown = true;
+      this.logger.info('DecisionEngine', `Loss cooldown extended for ${extended} ticks (ends at index ${this.cooldownEnd})`);
     }
   }
 }
