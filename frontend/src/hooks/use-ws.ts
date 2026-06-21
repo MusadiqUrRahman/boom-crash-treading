@@ -161,12 +161,15 @@ export function useWebSocket() {
               takeProfit: cfg?.takeProfit,
             });
           }
+          client.send('getTodayStats');
           break;
         }
         case 'tradeResolved': {
           const resolved = msg.data as TradeResolvedEvent;
           const cfg = useBotStore.getState().config;
           if (cfg) addTradeResolved(resolved, cfg);
+          client.send('getTodayStats');
+          client.send('getAllTrades', { page: 1, limit: 200 });
           break;
         }
         case 'signal': {

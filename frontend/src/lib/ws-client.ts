@@ -9,7 +9,7 @@ class WsClient {
   private ws: WebSocket | null = null;
   private handlers: Set<MessageHandler> = new Set();
   private requestIdCounter = 0;
-  private pendingMessages: Array<{ action: string; params?: Record<string, unknown> }> = [];
+  private pendingMessages: Array<{ requestId: string; action: string; params?: Record<string, unknown> }> = [];
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
   private reconnectAttempts = 0;
@@ -91,7 +91,7 @@ class WsClient {
       this.ws.send(JSON.stringify(msg));
     } else {
       if (this.pendingMessages.length < 100) {
-        this.pendingMessages.push({ action, params });
+        this.pendingMessages.push({ requestId, action, params });
       }
     }
     return requestId;
@@ -132,8 +132,7 @@ class WsClient {
   private _flushPending() {
     if (this.pendingMessages.length === 0) return;
     const batch = this.pendingMessages.splice(0);
-    for (const { action, params } of batch) {
-      const requestId = `req-${++this.requestIdCounter}`;
+    for (const { requestId, action, params } of batch) {
       const msg: WsRequest = { type: 'request', requestId, action, params };
       if (this.ws?.readyState === WebSocket.OPEN) {
         this.ws.send(JSON.stringify(msg));

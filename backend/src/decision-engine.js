@@ -42,7 +42,7 @@ class DecisionEngine {
     this.logger.info('DecisionEngine', `SCORE=${score} direction=${direction} threshold=${this.config.scoreThreshold}`);
 
     if (this.config.debugScores) {
-      this.logger.debug('DecisionEngine', `Components: ${JSON.stringify(components)}`);
+      this.logger.info('DecisionEngine', `Components: ${JSON.stringify(components)}`);
     }
 
     if (!enter) {

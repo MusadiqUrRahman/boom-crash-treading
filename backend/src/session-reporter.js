@@ -18,7 +18,8 @@ class SessionReporter {
   }
 
   checkAndGenerate() {
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     if (today === this.lastReportDate) return false;
 
     const db = new Database(this.dbPath);
@@ -26,7 +27,7 @@ class SessionReporter {
 
     try {
       const trades = db.prepare(
-        "SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id"
+        "SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id"
       ).all(today);
 
       if (trades.length === 0) {

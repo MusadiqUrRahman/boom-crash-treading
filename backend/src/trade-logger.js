@@ -2,6 +2,14 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 
+function getLocalDateString() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
+}
+
 class TradeLogger {
   constructor(dbPath, logger, defaultContractType) {
     this.dbPath = dbPath;
@@ -171,20 +179,20 @@ class TradeLogger {
       symbol: record.symbol,
       direction: record.direction,
       stake: record.stake,
-      payoutRate: record.payoutRate || null,
+      payoutRate: record.payoutRate ?? null,
       entryPrice: record.entryPrice,
       exitPrice: record.exitPrice,
       entryEpoch: record.entryEpoch || Math.floor(Date.now() / 1000),
       exitEpoch: record.exitEpoch || Math.floor(Date.now() / 1000),
       durationTicks: record.durationTicks || null,
-      score: record.score || null,
+      score: record.score ?? null,
       scoreRsi: (record.scoreComponents && record.scoreComponents.rsi) || 0,
       scoreBb: (record.scoreComponents && record.scoreComponents.bb) || 0,
       scoreEma: (record.scoreComponents && record.scoreComponents.ema) || 0,
       scoreRoc: (record.scoreComponents && record.scoreComponents.roc) || 0,
       scoreMomentum: (record.scoreComponents && record.scoreComponents.momentum) || 0,
       win: record.win ? 1 : 0,
-      pnl: record.pnl,
+      pnl: record.pnl ?? null,
       balanceAfter: record.balanceAfter ?? null,
       dryRun: record.dryRun ? 1 : 0,
       contractType: record.contractType || 'CALL',
@@ -243,15 +251,15 @@ class TradeLogger {
 
   getTradesToday() {
     if (!this.db) this.init();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString();
     return this.db.prepare(
-      "SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id"
+      "SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id"
     ).all(today);
   }
 
   getDailyStats() {
     if (!this.db) this.init();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString();
     const row = this.db.prepare(`
       SELECT 
         COUNT(*) AS total,
@@ -260,11 +268,11 @@ class TradeLogger {
         COALESCE(SUM(CASE WHEN win = 1 THEN pnl ELSE 0 END), 0) AS profit,
         COALESCE(SUM(CASE WHEN win = 0 THEN pnl ELSE 0 END), 0) AS loss,
         COALESCE(SUM(pnl), 0) AS netPnl
-      FROM trades WHERE DATE(created_at) = ?
+      FROM trades WHERE DATE(created_at, 'localtime') = ?
     `).get(today);
 
     const recentTrades = this.db.prepare(`
-      SELECT win FROM trades WHERE DATE(created_at) = ? ORDER BY created_at DESC
+      SELECT win FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY created_at DESC
     `).all(today);
 
     let consecutiveLosses = 0;
@@ -279,7 +287,7 @@ class TradeLogger {
 
   getTodayStats() {
     if (!this.db) this.init();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalDateString();
     const row = this.db.prepare(`
       SELECT 
         COUNT(*) AS total,
@@ -288,11 +296,11 @@ class TradeLogger {
         COALESCE(SUM(CASE WHEN win = 1 THEN pnl ELSE 0 END), 0) AS profit,
         COALESCE(SUM(CASE WHEN win = 0 THEN pnl ELSE 0 END), 0) AS loss,
         COALESCE(SUM(pnl), 0) AS netPnl
-      FROM trades WHERE DATE(created_at) = ?
+      FROM trades WHERE DATE(created_at, 'localtime') = ?
     `).get(today);
 
     const recent = this.db.prepare(
-      'SELECT win FROM trades WHERE DATE(created_at) = ? ORDER BY id DESC LIMIT 50'
+      'SELECT win FROM trades WHERE DATE(created_at, \'localtime\') = ? ORDER BY id DESC LIMIT 50'
     ).all(today);
 
     let consecutiveLosses = 0;

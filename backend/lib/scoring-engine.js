@@ -13,17 +13,21 @@ function computeScore(indicators, config) {
   const scoreThreshold = config.scoreThreshold || 6;
 
   // ---- RSI Component ----
+  const rsiOversold = config.rsiOversold || 35;
+  const rsiOverbought = config.rsiOverbought || 65;
+  const rsiMid = (rsiOversold + rsiOverbought) / 2;
+
   if (direction === 'CALL') {
     if (rsiVal !== null) {
-      if (rsiVal < 30) {
+      if (rsiVal < rsiOversold - 5) {
         components.rsi = 4;
-      } else if (rsiVal < 35) {
+      } else if (rsiVal < rsiOversold) {
         components.rsi = 3;
-      } else if (rsiVal < 45) {
+      } else if (rsiVal < rsiMid) {
         components.rsi = 2;
-      } else if (rsiVal < 55) {
+      } else if (rsiVal < rsiMid + 5) {
         components.rsi = 1;
-      } else if (rsiVal < 65) {
+      } else if (rsiVal < rsiOverbought) {
         components.rsi = -1;
       } else {
         components.rsi = -3;
@@ -31,15 +35,15 @@ function computeScore(indicators, config) {
     }
   } else {
     if (rsiVal !== null) {
-      if (rsiVal > 70) {
+      if (rsiVal > rsiOverbought + 5) {
         components.rsi = 4;
-      } else if (rsiVal > 65) {
+      } else if (rsiVal > rsiOverbought) {
         components.rsi = 3;
-      } else if (rsiVal > 55) {
+      } else if (rsiVal > rsiMid) {
         components.rsi = 2;
-      } else if (rsiVal > 45) {
+      } else if (rsiVal > rsiMid - 5) {
         components.rsi = 1;
-      } else if (rsiVal > 35) {
+      } else if (rsiVal > rsiOversold) {
         components.rsi = -1;
       } else {
         components.rsi = -3;
@@ -110,16 +114,17 @@ function computeScore(indicators, config) {
   }
 
   // ---- ROC Component ----
+  const rocThreshold = config.rocMagnitudeThreshold || 0.5;
   if (rocVal !== null && rocVal !== undefined) {
     const absRoc = Math.abs(rocVal);
     if (direction === 'CALL') {
-      if (rocVal < -0.5) components.roc = 2;
-      else if (rocVal > 0.5) components.roc = -1;
-      else if (absRoc < 0.1) components.roc = -1;
+      if (rocVal < -rocThreshold) components.roc = 2;
+      else if (rocVal > rocThreshold) components.roc = -1;
+      else if (absRoc < rocThreshold * 0.2) components.roc = -1;
     } else {
-      if (rocVal > 0.5) components.roc = 2;
-      else if (rocVal < -0.5) components.roc = -1;
-      else if (absRoc < 0.1) components.roc = -1;
+      if (rocVal > rocThreshold) components.roc = 2;
+      else if (rocVal < -rocThreshold) components.roc = -1;
+      else if (absRoc < rocThreshold * 0.2) components.roc = -1;
     }
   }
 

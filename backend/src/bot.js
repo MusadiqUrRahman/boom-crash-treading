@@ -322,6 +322,14 @@ class Bot extends EventEmitter {
     this._evaluateTrade(tick);
   }
 
+  _getLocalDateString() {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+
   _resolveDirection() {
     if (!this.config.dynamicDirection) return this.config.direction;
 
@@ -345,8 +353,14 @@ class Bot extends EventEmitter {
   _evaluateTrade(tick) {
     const indicatorValues = this.indicatorEngine.getAll();
     const buffer = this.tickStream.getBuffer();
+    const savedDirection = this.config.direction;
     this.config.direction = this._resolveDirection();
-    const result = this.decisionEngine.evaluate(buffer, indicatorValues, this.tickIndex);
+    let result;
+    try {
+      result = this.decisionEngine.evaluate(buffer, indicatorValues, this.tickIndex);
+    } finally {
+      this.config.direction = savedDirection;
+    }
 
     if (result.action === 'ENTER') {
       // _onEnterSignal is called synchronously by evaluate() — if it rejected
@@ -613,7 +627,7 @@ class Bot extends EventEmitter {
     }
 
     this.tradeLogger.logDailyStats(
-      new Date().toISOString().slice(0, 10),
+      this._getLocalDateString(),
       this.config.symbol,
       this.riskManager.dailyTrades,
       this.riskManager.dailyWins,

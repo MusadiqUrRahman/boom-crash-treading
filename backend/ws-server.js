@@ -117,10 +117,12 @@ class BotWebSocketServer {
         return toCamelCase(this.bot.tradeLogger.getTradesToday());
       },
       getDailyReport: () => {
-        const date = (params && params.date) || new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const defaultDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const date = (params && params.date) || defaultDate;
         try {
           const db = getDb();
-          const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id").all(date);
+          const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id").all(date);
           if (rows.length === 0) return [];
           const groups = {};
           for (const r of rows) {
@@ -221,10 +223,12 @@ class BotWebSocketServer {
         return this._getTodayStatsFull();
       },
       getHourlyBreakdown: () => {
-        const date = (params && params.date) || new Date().toISOString().slice(0, 10);
+        const now = new Date();
+        const defaultDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const date = (params && params.date) || defaultDate;
         try {
           const db = getDb();
-          const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id").all(date);
+          const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id").all(date);
           const hourly = {};
           for (let h = 0; h < 24; h++) hourly[h] = { trades: 0, wins: 0, losses: 0, pnl: 0 };
           for (const r of rows) {
@@ -342,10 +346,11 @@ class BotWebSocketServer {
   }
 
   _getTodayStatsFull() {
-    const today = new Date().toISOString().slice(0, 10);
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     try {
       const db = getDb();
-      const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id").all(today);
+      const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id").all(today);
       const now = new Date();
       const currentHour = now.getUTCHours();
       const hourly = {};
