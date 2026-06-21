@@ -8,6 +8,7 @@ const RiskManager = require('./risk-manager');
 const StakeManager = require('./stake-manager');
 const TradeLogger = require('./trade-logger');
 const SessionTracker = require('./session-tracker');
+const { computeScore } = require('../lib/scoring-engine');
 const fs = require('fs');
 const path = require('path');
 
@@ -358,7 +359,22 @@ class Bot extends EventEmitter {
     const indicatorValues = this.indicatorEngine.getAll();
     const buffer = this.tickStream.getBuffer();
     const savedDirection = this.config.direction;
-    this.config.direction = this._resolveDirection();
+
+    const putIndicators = { ...indicatorValues, deltaAlignment: this.indicatorEngine._engine.deltaAlignment(5, 'PUT') };
+    const callIndicators = { ...indicatorValues, deltaAlignment: this.indicatorEngine._engine.deltaAlignment(5, 'CALL') };
+
+    const putResult = computeScore(putIndicators, { ...this.config, direction: 'PUT' });
+    const callResult = computeScore(callIndicators, { ...this.config, direction: 'CALL' });
+
+    const bestResult = putResult.score >= callResult.score ? putResult : callResult;
+    this.config.direction = bestResult.direction;
+
+    this.logger.info('DecisionEngine', `PUT=${putResult.score} CALL=${callResult.score} → BEST=${bestResult.direction} (${bestResult.score}) threshold=${this.config.scoreThreshold}`);
+    if (this.config.debugScores) {
+      this.logger.info('DecisionEngine', `PUT components: ${JSON.stringify(putResult.components)}`);
+      this.logger.info('DecisionEngine', `CALL components: ${JSON.stringify(callResult.components)}`);
+    }
+
     let result;
     try {
       result = this.decisionEngine.evaluate(buffer, indicatorValues, this.tickIndex);
