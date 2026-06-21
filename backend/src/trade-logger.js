@@ -184,7 +184,7 @@ class TradeLogger {
       exitPrice: record.exitPrice,
       entryEpoch: record.entryEpoch || Math.floor(Date.now() / 1000),
       exitEpoch: record.exitEpoch || Math.floor(Date.now() / 1000),
-      durationTicks: record.durationTicks || null,
+      durationTicks: record.durationTicks ?? null,
       score: record.score ?? null,
       scoreRsi: (record.scoreComponents && record.scoreComponents.rsi) || 0,
       scoreBb: (record.scoreComponents && record.scoreComponents.bb) || 0,
@@ -196,9 +196,9 @@ class TradeLogger {
       balanceAfter: record.balanceAfter ?? null,
       dryRun: record.dryRun ? 1 : 0,
       contractType: record.contractType || 'CALL',
-      multiplier: record.multiplier || null,
-      stopLoss: record.stopLoss || null,
-      takeProfit: record.takeProfit || null,
+      multiplier: record.multiplier ?? null,
+      stopLoss: record.stopLoss ?? null,
+      takeProfit: record.takeProfit ?? null,
       exitReason: record.exitReason || null,
     });
     return info.lastInsertRowid;
@@ -229,7 +229,7 @@ class TradeLogger {
     this.updateSignalStmt.run({
       signalId,
       outcome: outcome || null,
-      pnl: pnl || null,
+      pnl: pnl ?? null,
       contractId: contractId || null,
       tradeId: tradeId || null,
     });

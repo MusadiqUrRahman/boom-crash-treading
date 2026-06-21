@@ -138,10 +138,10 @@ class BotWebSocketServer {
       getDailyReports: () => {
         try {
           const db = getDb();
-          const dates = db.prepare("SELECT DISTINCT DATE(created_at) as day FROM trades ORDER BY day DESC").all();
+          const dates = db.prepare("SELECT DISTINCT DATE(created_at, 'localtime') as day FROM trades ORDER BY day DESC").all();
           const all = [];
           for (const d of dates) {
-            const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id").all(d.day);
+            const rows = db.prepare("SELECT * FROM trades WHERE DATE(created_at, 'localtime') = ? ORDER BY id").all(d.day);
             const groups = {};
             for (const r of rows) {
               const key = r.symbol + '|' + r.direction;

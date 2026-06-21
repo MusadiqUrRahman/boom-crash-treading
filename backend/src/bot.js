@@ -323,6 +323,11 @@ class Bot extends EventEmitter {
     }
     this._enteringTickCount = 0;
 
+    if (this._tradeInProgress) {
+      this._setState(BOT_STATE.SKIP);
+      return;
+    }
+
     this._setState(BOT_STATE.DECISION);
     this._evaluateTrade(tick);
   }

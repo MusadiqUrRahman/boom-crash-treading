@@ -49,6 +49,12 @@ class DecisionEngine {
       return { action: 'SKIP', reason: 'no_signal' };
     }
 
+    const strongComponents = ['rsi', 'bb', 'momentum'].filter(k => (components[k] || 0) >= 2).length;
+    if (strongComponents < 2) {
+      this.logger.info('DecisionEngine', `Weak signal: only ${strongComponents} strong component(s) (need ≥2) — skipping`);
+      return { action: 'SKIP', reason: 'weak_signal' };
+    }
+
     const price = tickBuffer.length > 0 ? tickBuffer[tickBuffer.length - 1].quote : null;
     this.logger.info('DecisionEngine', `ENTER ${direction} at ${price} (score=${score})`);
 
