@@ -1,150 +1,158 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { createChart, ColorType, IChartApi, ISeriesApi, LineStyle, LineSeries, type UTCTimestamp } from 'lightweight-charts';
+import { useEffect, useRef, useCallback } from 'react';
 import { useBotStore } from '@/stores/bot-store';
 import { motion } from 'framer-motion';
 
+const MAX_TICKS = 100;
+const COLORS = {
+  bg: '#0c0c18',
+  line: '#3b82f6',
+  lineGlow: 'rgba(59,130,246,0.15)',
+  grid: 'rgba(59,130,246,0.06)',
+  text: '#484870',
+  textBright: '#8888aa',
+  crosshair: 'rgba(59,130,246,0.4)',
+  up: '#22c55e',
+  down: '#ef4444',
+};
+
 export function PriceChart() {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  const lineSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const bbUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const bbLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const bbMiddleRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const emaShortRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const emaLongRef = useRef<ISeriesApi<'Line'> | null>(null);
-
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const ticks = useBotStore((s) => s.ticks);
-  const indicators = useBotStore((s) => s.indicators);
+  const ticksRef = useRef(ticks);
+  ticksRef.current = ticks;
 
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
+  const draw = useCallback(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
 
-    const chart = createChart(chartContainerRef.current, {
-      layout: {
-        background: { type: ColorType.Solid, color: '#0c0c18' },
-        textColor: '#484870',
-        fontFamily: "'Geist Mono', 'JetBrains Mono', monospace",
-      },
-      grid: {
-        vertLines: { color: 'rgba(59,130,246,0.04)' },
-        horzLines: { color: 'rgba(59,130,246,0.04)' },
-      },
-      crosshair: {
-        vertLine: { color: '#3b82f6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b82f6' },
-        horzLine: { color: '#3b82f6', width: 1, style: LineStyle.Dashed, labelBackgroundColor: '#3b82f6' },
-      },
-      rightPriceScale: {
-        borderColor: '#1a1a35',
-        scaleMargins: { top: 0.05, bottom: 0.15 },
-      },
-      timeScale: {
-        borderColor: '#1a1a35',
-        timeVisible: true,
-        secondsVisible: false,
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 420,
-    });
+    const dpr = window.devicePixelRatio || 1;
+    const w = container.clientWidth;
+    const h = 320;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
 
-    const lineSeries = chart.addSeries(LineSeries, {
-      color: '#3b82f6',
-      lineWidth: 2,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      crosshairMarkerVisible: true,
-      crosshairMarkerRadius: 4,
-      crosshairMarkerBorderColor: '#3b82f6',
-      crosshairMarkerBackgroundColor: '#0c0c18',
-    });
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+    ctx.scale(dpr, dpr);
 
-    const bbUpper = chart.addSeries(LineSeries, {
-      color: 'rgba(59, 130, 246, 0.25)',
-      lineWidth: 1,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      lastValueVisible: false,
-    });
+    const data = ticksRef.current.slice(-MAX_TICKS);
+    if (data.length < 2) {
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '12px monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText('Waiting for ticks...', w / 2, h / 2);
+      return;
+    }
 
-    const bbMiddle = chart.addSeries(LineSeries, {
-      color: 'rgba(59, 130, 246, 0.12)',
-      lineWidth: 1,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      lastValueVisible: false,
-    });
+    const pad = { top: 20, right: 60, bottom: 24, left: 8 };
+    const cw = w - pad.left - pad.right;
+    const ch = h - pad.top - pad.bottom;
 
-    const bbLower = chart.addSeries(LineSeries, {
-      color: 'rgba(59, 130, 246, 0.25)',
-      lineWidth: 1,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      lastValueVisible: false,
-    });
+    const prices = data.map((t) => t.quote);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    const padRange = range * 0.1;
+    const yMin = min - padRange;
+    const yMax = max + padRange;
+    const yRange = yMax - yMin;
 
-    const emaShort = chart.addSeries(LineSeries, {
-      color: '#f59e0b',
-      lineWidth: 1,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      lastValueVisible: false,
-    });
+    const toX = (i: number) => pad.left + (i / (data.length - 1)) * cw;
+    const toY = (v: number) => pad.top + (1 - (v - yMin) / yRange) * ch;
 
-    const emaLong = chart.addSeries(LineSeries, {
-      color: 'rgba(139, 92, 246, 0.5)',
-      lineWidth: 1,
-      priceFormat: { type: 'price', precision: 2, minMove: 0.01 },
-      lastValueVisible: false,
-    });
+    ctx.clearRect(0, 0, w, h);
 
-    chartRef.current = chart;
-    lineSeriesRef.current = lineSeries;
-    bbUpperRef.current = bbUpper;
-    bbLowerRef.current = bbLower;
-    bbMiddleRef.current = bbMiddle;
-    emaShortRef.current = emaShort;
-    emaLongRef.current = emaLong;
+    ctx.strokeStyle = COLORS.grid;
+    ctx.lineWidth = 0.5;
+    for (let i = 0; i <= 4; i++) {
+      const y = pad.top + (i / 4) * ch;
+      ctx.beginPath();
+      ctx.moveTo(pad.left, y);
+      ctx.lineTo(w - pad.right, y);
+      ctx.stroke();
 
-    const handleResize = () => {
-      if (chartContainerRef.current) {
-        chart.applyOptions({ width: chartContainerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener('resize', handleResize);
+      const val = yMax - (i / 4) * yRange;
+      ctx.fillStyle = COLORS.text;
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(val.toFixed(2), w - pad.right + 6, y + 3);
+    }
 
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-    };
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(prices[0]));
+    for (let i = 1; i < prices.length; i++) {
+      ctx.lineTo(toX(i), toY(prices[i]));
+    }
+    ctx.strokeStyle = COLORS.line;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.moveTo(toX(0), toY(prices[0]));
+    for (let i = 1; i < prices.length; i++) {
+      ctx.lineTo(toX(i), toY(prices[i]));
+    }
+    ctx.lineTo(toX(prices.length - 1), pad.top + ch);
+    ctx.lineTo(toX(0), pad.top + ch);
+    ctx.closePath();
+    const grad = ctx.createLinearGradient(0, pad.top, 0, pad.top + ch);
+    grad.addColorStop(0, COLORS.lineGlow);
+    grad.addColorStop(1, 'transparent');
+    ctx.fillStyle = grad;
+    ctx.fill();
+
+    const lastI = prices.length - 1;
+    const lastX = toX(lastI);
+    const lastY = toY(prices[lastI]);
+    const prevPrice = prices.length >= 2 ? prices[prices.length - 2] : prices[lastI];
+    const dotColor = prices[lastI] >= prevPrice ? COLORS.up : COLORS.down;
+
+    ctx.beginPath();
+    ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+    ctx.fillStyle = dotColor;
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.setLineDash([3, 3]);
+    ctx.moveTo(lastX, pad.top);
+    ctx.lineTo(lastX, pad.top + ch);
+    ctx.strokeStyle = COLORS.crosshair;
+    ctx.lineWidth = 0.5;
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    ctx.fillStyle = COLORS.textBright;
+    ctx.font = 'bold 11px monospace';
+    ctx.textAlign = 'left';
+    ctx.fillText(prices[lastI].toFixed(2), lastX + 6, lastY - 8);
+
+    if (data.length > 1) {
+      const first = data[0];
+      const last = data[data.length - 1];
+      const diff = last.quote - first.quote;
+      const pct = ((diff / first.quote) * 100).toFixed(3);
+      ctx.fillStyle = diff >= 0 ? COLORS.up : COLORS.down;
+      ctx.font = '10px monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText(`${diff >= 0 ? '+' : ''}${diff.toFixed(2)} (${diff >= 0 ? '+' : ''}${pct}%)`, w - pad.right, pad.top - 6);
+    }
   }, []);
 
   useEffect(() => {
-    if (!lineSeriesRef.current || ticks.length === 0) return;
-    const seen = new Set<number>();
-    const unique = ticks.filter((t) => {
-      if (seen.has(t.epoch)) return false;
-      seen.add(t.epoch);
-      return true;
-    });
-    if (unique.length === 0) return;
-    lineSeriesRef.current.setData(
-      unique.map((t) => ({ time: t.epoch as UTCTimestamp, value: t.quote }))
-    );
-  }, [ticks]);
+    draw();
+  }, [ticks, draw]);
 
   useEffect(() => {
-    if (!indicators || ticks.length === 0) return;
-    const time = ticks[ticks.length - 1].epoch as UTCTimestamp;
-
-    if (indicators.bb) {
-      bbUpperRef.current?.update({ time, value: indicators.bb.upper });
-      bbMiddleRef.current?.update({ time, value: indicators.bb.middle });
-      bbLowerRef.current?.update({ time, value: indicators.bb.lower });
-    }
-
-    if (indicators.emaShort !== null) {
-      emaShortRef.current?.update({ time, value: indicators.emaShort });
-    }
-    if (indicators.emaLong !== null) {
-      emaLongRef.current?.update({ time, value: indicators.emaLong });
-    }
-  }, [indicators, ticks]);
+    const onResize = () => draw();
+    window.addEventListener('resize', onResize);
+    return () => window.removeEventListener('resize', onResize);
+  }, [draw]);
 
   if (ticks.length === 0) {
     return (
@@ -154,14 +162,9 @@ export function PriceChart() {
         className="bg-[--color-bg-elevated] border border-[--color-border] rounded-lg p-3"
       >
         <div className="flex items-center gap-2 mb-3">
-          <div className="text-[11px] font-medium text-[--color-text-secondary] uppercase tracking-wider">Price Chart</div>
-          <div className="flex items-center gap-3 ml-auto text-[9px] text-[--color-text-muted]">
-            <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-blue-500 rounded" /> Price</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-amber-500 rounded" /> EMA</span>
-            <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-purple-500/50 rounded" /> BB</span>
-          </div>
+          <div className="text-[11px] font-medium text-[--color-text-secondary] uppercase tracking-wider">Price</div>
         </div>
-        <div className="flex items-center justify-center h-[420px] text-xs text-[--color-text-muted]">
+        <div className="flex items-center justify-center h-[320px] text-xs text-[--color-text-muted]">
           <div className="flex flex-col items-center gap-2">
             <div className="w-5 h-5 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
             <span>Waiting for tick data...</span>
@@ -179,14 +182,16 @@ export function PriceChart() {
       className="bg-[--color-bg-elevated] border border-[--color-border] rounded-lg p-3"
     >
       <div className="flex items-center gap-2 mb-2">
-        <div className="text-[11px] font-medium text-[--color-text-secondary] uppercase tracking-wider">Price Chart</div>
+        <div className="text-[11px] font-medium text-[--color-text-secondary] uppercase tracking-wider">Price</div>
         <div className="flex items-center gap-3 ml-auto text-[9px] text-[--color-text-muted]">
-          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-blue-500 rounded" /> Price</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-amber-500 rounded" /> EMA</span>
-          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-purple-500/50 rounded" /> BB</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-blue-500 rounded" /> BOOM1000</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-green-500 rounded" /> Up</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-0.5 bg-red-500 rounded" /> Down</span>
         </div>
       </div>
-      <div ref={chartContainerRef} />
+      <div ref={containerRef}>
+        <canvas ref={canvasRef} className="rounded" />
+      </div>
     </motion.div>
   );
 }
