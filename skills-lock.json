@@ -55,6 +55,12 @@
       "skillPath": ".claude/skills/risk-management/SKILL.md",
       "computedHash": "fa9e92d9c3beae760ddda9d2c6abb8e15be8d1a2e18f557541b53b2410731107"
     },
+    "ui-ux-pro-max": {
+      "source": "nextlevelbuilder/ui-ux-pro-max-skill",
+      "sourceType": "github",
+      "skillPath": ".claude/skills/ui-ux-pro-max/SKILL.md",
+      "computedHash": "6337038fe1fe6bbe1b9f252ab678ee575859190bab6f0f246f4061824eb40875"
+    },
     "vercel-react-best-practices": {
       "source": "vercel-labs/agent-skills",
       "sourceType": "github",

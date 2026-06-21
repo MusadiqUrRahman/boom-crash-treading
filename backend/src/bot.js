@@ -66,6 +66,7 @@ class Bot extends EventEmitter {
     this._lastEntryAttemptTick = -1;
     this._entryCooldownTicks = parseInt(config.entryCooldownTicks || '10', 10);
     this._maxPositionTicks = parseInt(config.maxPositionTicks || '900', 10);
+    this._autoSellTriggered = false;
     this._setupListeners();
   }
 
@@ -292,13 +293,16 @@ class Bot extends EventEmitter {
       this._setState(BOT_STATE.IN_POSITION);
       const ticksInPosition = this.tickIndex - this._lastEntryTickIndex;
       if (this._maxPositionTicks > 0 && ticksInPosition > this._maxPositionTicks) {
-        this.logger.warn('Bot', `Position auto-sell: ${ticksInPosition} ticks exceeded ${this._maxPositionTicks} max — selling`);
-        for (const [localId, info] of this.contractMonitor.activeContracts) {
-          const contractId = info.contractId;
-          if (contractId) {
-            this.tradeExecutor.sellContract(contractId).catch(err => {
-              this.logger.error('Bot', `Auto-sell failed for ${contractId}: ${err.message}`);
-            });
+        if (!this._autoSellTriggered) {
+          this._autoSellTriggered = true;
+          this.logger.warn('Bot', `Position auto-sell: ${ticksInPosition} ticks exceeded ${this._maxPositionTicks} max — selling`);
+          for (const [localId, info] of this.contractMonitor.activeContracts) {
+            const contractId = info.contractId;
+            if (contractId && !this.tradeExecutor._contractStreams.get(contractId)?.resolved) {
+              this.tradeExecutor.sellContract(contractId).catch(err => {
+                this.logger.error('Bot', `Auto-sell failed for ${contractId}: ${err.message}`);
+              });
+            }
           }
         }
       }
@@ -415,6 +419,7 @@ class Bot extends EventEmitter {
 
     this._tradeInProgress = true;
     this._executingTrade = true;
+    this._autoSellTriggered = false;
     this._lastEntryAttemptTick = this.tickIndex;
     this._currentTrade = { signal, entryTickIndex: this.tickIndex };
 

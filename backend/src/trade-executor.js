@@ -316,6 +316,12 @@ class TradeExecutor {
   }
 
   async sellContract(contractId) {
+    const entry = this._contractStreams.get(contractId);
+    if (entry && entry.resolved) {
+      this.logger.info('TradeExecutor', `Contract ${contractId} already resolved — skipping sell`);
+      return;
+    }
+
     let sellPrice;
     try {
       const statusResp = await Promise.race([
