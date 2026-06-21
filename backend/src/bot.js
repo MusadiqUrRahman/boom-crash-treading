@@ -377,7 +377,8 @@ class Bot extends EventEmitter {
 
     let result;
     try {
-      result = this.decisionEngine.evaluate(buffer, indicatorValues, this.tickIndex);
+      const correctedIndicators = bestResult.direction === 'PUT' ? putIndicators : callIndicators;
+      result = this.decisionEngine.evaluate(buffer, correctedIndicators, this.tickIndex);
     } finally {
       this.config.direction = savedDirection;
     }
