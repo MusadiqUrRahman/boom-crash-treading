@@ -6,10 +6,11 @@ class IndicatorEngine {
     this._engine = new BaseIndicatorEngine(config.tickBufferSize || 200);
     this._ready = false;
     this._warmupNeeded = Math.max(
-      config.rsiPeriod || 14,
-      config.bbPeriod || config.bbPeriod || 20,
+      (config.rsiPeriod || 14) * 2,
+      config.bbPeriod || 20,
       config.emaLongPeriod || 20,
-      (config.rocPeriod || 5) + 1
+      (config.rocPeriod || 5) + 1,
+      config.minTicksBeforeTrade || 40
     );
     this._cached = {};
   }
@@ -22,32 +23,36 @@ class IndicatorEngine {
     }
 
     if (this._ready) {
+      const price = tickPrice;
+      const emaShort = this._engine.ema(this.config.emaShortPeriod || 5);
+      const emaLong = this._engine.ema(this.config.emaLongPeriod || 20);
       this._cached = {
         rsi: this._engine.rsi(this.config.rsiPeriod || 14),
         bb: this._engine.bollingerBands(this.config.bbPeriod || 20, this.config.bbStdDev || 2),
-        emaShort: this._engine.ema(this.config.emaShortPeriod || 5),
-        emaLong: this._engine.ema(this.config.emaLongPeriod || 20),
+        emaShort,
+        emaDistance: emaShort !== null ? (price - emaShort) / price : null,
+        emaTrend: (emaShort !== null && emaLong !== null) ? (emaShort - emaLong) / emaLong : null,
         roc: this._engine.roc(this.config.rocPeriod || 5),
-        deltas: this._engine.deltas(5),
+        deltaAlignment: this._engine.deltaAlignment(5, this.config.direction || 'PUT'),
         _rawPrices: this._engine.prices,
       };
     }
   }
 
   get rsi() { return this._cached.rsi || null; }
-  get bollingerBands() { return this._cached.bb || null; }
-  get emaShort() { return this._cached.hasOwnProperty('emaShort') ? this._cached.emaShort : null; }
-  get emaLong() { return this._cached.hasOwnProperty('emaLong') ? this._cached.emaLong : null; }
+  get bb() { return this._cached.bb || null; }
   get roc() { return this._cached.hasOwnProperty('roc') ? this._cached.roc : null; }
+  get emaDistance() { return this._cached.hasOwnProperty('emaDistance') ? this._cached.emaDistance : null; }
+  get emaTrend() { return this._cached.hasOwnProperty('emaTrend') ? this._cached.emaTrend : null; }
 
   getAll() {
     return {
       rsi: this.rsi,
-      bb: this.bollingerBands,
-      emaShort: this.emaShort,
-      emaLong: this.emaLong,
+      bb: this.bb,
+      emaDistance: this.emaDistance,
+      emaTrend: this.emaTrend,
       roc: this.roc,
-      deltas: this._cached.deltas || null,
+      deltaAlignment: this._cached.deltaAlignment !== undefined ? this._cached.deltaAlignment : null,
       _rawPrices: this._engine.prices || [],
     };
   }

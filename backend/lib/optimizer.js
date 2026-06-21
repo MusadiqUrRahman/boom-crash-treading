@@ -12,7 +12,7 @@ class Optimizer {
       parallel: false,
       workers: 4,
       checkpointPath: path.resolve(__dirname, '..', 'data', 'optimization-results'),
-      batchSize: 500,
+      batchSize: 100,
       ...options,
     };
 
@@ -106,7 +106,7 @@ class Optimizer {
 
       if ((i + 1) % this.options.batchSize === 0 || i === total - 1) {
         const elapsed = ((Date.now() - this._startTime) / 1000).toFixed(0);
-        console.log(`    ${(i + 1).toLocaleString()} / ${total.toLocaleString()} combos evaluated (${elapsed}s elapsed)`);
+        console.log(`    ${(i + 1).toLocaleString()} / ${total.toLocaleString()} combos evaluated (${elapsed}s elapsed, ${rawResults.length} valid)`);
 
         this._saveCheckpoint(checkpointFile, {
           stage: stageNum,

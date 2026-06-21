@@ -1,6 +1,6 @@
 const IndicatorEngine = require('./indicator-engine');
 const { computeScore } = require('./scoring-engine');
-const { simulateTrade } = require('./trade-simulator');
+const { simulateTrade, simulateMultiplierTrade } = require('./trade-simulator');
 
 const STATES = {
   COLLECTING: 'COLLECTING',
@@ -96,19 +96,24 @@ class BacktestingEngine {
           break;
         }
 
+        const emaShortVal = this.indicatorEngine.ema(this.config.emaShortPeriod);
+
         const indicators = {
           rsi: this.indicatorEngine.rsi(14),
           bb: this.indicatorEngine.bollingerBands(this.config.bbPeriod, this.config.bbStdDev),
-          emaShort: this.indicatorEngine.ema(this.config.emaShortPeriod),
-          emaLong: this.indicatorEngine.ema(this.config.emaLongPeriod),
+          emaShort: emaShortVal,
+          emaDistance: emaShortVal !== null
+            ? (price - emaShortVal) / price
+            : null,
+          deltaAlignment: this.indicatorEngine.deltaAlignment(5, this.config.direction),
           roc: this.indicatorEngine.roc(this.config.rocPeriod),
-          deltas: this.indicatorEngine.deltas(3),
+          deltas: this.indicatorEngine.deltas(5),
           _rawPrices: this.indicatorEngine.prices,
         };
 
         const score = computeScore(indicators, this.config);
 
-        if (score.decision.enter && score.decision.direction === this.config.direction) {
+        if (score.enter) {
           this._currentScore = score;
           this.state = STATES.SCORE_READY;
         }
@@ -127,7 +132,6 @@ class BacktestingEngine {
 
       case STATES.DECISION:
         this.pendingExitIndex = idx + this.config.durationTicks;
-
         if (this.pendingExitIndex >= this.tickData.length) {
           this.state = STATES.SCORING;
           break;
@@ -140,10 +144,9 @@ class BacktestingEngine {
           entryTime: epoch,
           direction: this.config.direction,
           durationTicks: this.config.durationTicks,
-          score: this._currentScore.decision.direction === this.config.direction
-            ? this._currentScore[this.config.direction.toLowerCase()].total
-            : this._currentScore.put.total,
-          scoreComponents: this._currentScore[this.config.direction.toLowerCase()].components,
+          contractType: this.config.contractType,
+          score: this._currentScore.score,
+          scoreComponents: this._currentScore.components,
         };
 
         this.state = STATES.ENTERING;
@@ -154,22 +157,40 @@ class BacktestingEngine {
         break;
 
       case STATES.IN_POSITION:
-        if (idx >= this.pendingExitIndex) {
+        if (this.config.contractType && this.config.contractType.startsWith('MULT')) {
+          this.state = STATES.RESOLVING;
+        } else if (idx >= this.pendingExitIndex) {
           this.state = STATES.RESOLVING;
         }
         break;
 
       case STATES.RESOLVING:
-        const result = simulateTrade(
-          this.currentTrade.entryTick,
-          this.currentTrade.entryPrice,
-          this.currentTrade.direction,
-          this.config.durationTicks,
-          this.config.payoutRate,
-          this.config.stake,
-          this.config.allowEquals,
-          this.tickData.map(t => t.quote)
-        );
+        let result;
+        if (this.config.contractType && this.config.contractType.startsWith('MULT')) {
+          result = simulateMultiplierTrade(
+            this.currentTrade.entryTick,
+            this.currentTrade.entryPrice,
+            this.currentTrade.direction,
+            this.tickData.map(t => t.quote),
+            this.config.stake,
+            this.config.multiplier || 500,
+            this.config.stopLoss || 1.00,
+            this.config.takeProfit || 2.00,
+            this.config.maxMlDurationTicks || 100,
+            this.config.trailDistance || 0
+          );
+        } else {
+          result = simulateTrade(
+            this.currentTrade.entryTick,
+            this.currentTrade.entryPrice,
+            this.currentTrade.direction,
+            this.config.durationTicks,
+            this.config.payoutRate,
+            this.config.stake,
+            this.config.allowEquals,
+            this.tickData.map(t => t.quote)
+          );
+        }
 
         if (result) {
           this.tradeCounter++;
@@ -178,10 +199,13 @@ class BacktestingEngine {
           const tradeRecord = {
             ...this.currentTrade,
             exitTick: result.exitIndex,
-            exitTime: this.tickData[result.exitIndex].epoch,
+            exitTime: result.exitIndex !== undefined
+              ? this.tickData[Math.min(result.exitIndex, this.tickData.length - 1)].epoch
+              : epoch,
             exitPrice: result.exitPrice,
             win: result.win,
             pnl: result.pnl,
+            exitReason: result.exitReason,
           };
 
           this.trades.push(tradeRecord);

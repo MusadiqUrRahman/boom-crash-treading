@@ -1,0 +1,79 @@
+## Goal
+- Run automated MULTUP/MULTDOWN trades on BOOM1000 with dynamic direction, aiming for profitability by trading with the trend instead of always-PUT
+
+## Constraints & Preferences
+- BOOM1000 only supports MULTUP and MULTDOWN (multiplier contracts) — plain CALL/PUT vanilla options are NOT available
+- Deriv API enforces minimum SL/TP=$0.10
+- Deriv `limit_order.stop_loss` does NOT fire during rapid single-tick spikes (tested: 10pt+ upward spikes produced -$0.50–$1.00 loss instead of $0.10 SL)
+- Deriv `limit_order.take_profit` DOES work when the market moves steadily in the trade's direction (proved by trade id=26, +$0.10 win)
+- Demo account DOT93163035, balance ~$9992
+- WS drops with code 1006 persist (Deriv server abnormal closure) — **reconnection was silently failing** because ConnectionManager's close handler was never invoked (Observable subscription pattern broken)
+- MAX_TIMEOUT_EXTENSIONS=1000 → max duration ~83min before safety sell
+- Circuit breaker: 30min cooldown after 15 consecutive losses, max 3 trips/day
+
+## Progress
+### Done
+- **Researched contract availability** — queried Deriv API directly: BOOM1000 offers only MULTUP (200x, CALL-direction) and MULTDOWN (200x, PUT-direction). Both work with multiplier, limit_order, and $1 minimum stake
+- **CALL/PUT rejected by API** — CALL and PUT proposals on BOOM1000 failed with TradingDuration error (not supported on synthetic indices)
+- **Fixed reconnection** — added direct `ws.on('close')` backup listener in ConnectionManager that bypasses the broken Observable subscription pattern. Also added `_notifyClose` logging in DerivClient to trace handler counts
+- **Full trade analysis** — queried all 29 DB trades. Win rate 31% (9W/20L), total PnL -$3.68. **All 6 negative-PnL trades (-$3.82 total) are caused by upward spikes against PUT**. Switching to CALL would have turned the 2 largest spike losses (-$2.00) into wins of similar magnitude
+- **Implemented dynamic direction detection** — decision-engine.js now analyzes up/down tick count, EMA cross, ROC, and RSI to detect trend direction before each trade. Outputs CALL (MULTUP) when trend is up, PUT (MULTDOWN) when trend is down
+- **Reduced multiplier to 100x** — halves all spike losses. At 200x a 10pt spike cost -$1.00; at 100x it costs -$0.50
+- **Increased TAKE_PROFIT from $0.10 to $0.50** — bigger profit target per win. With 100x/$2, a 0.25pt favourable move gives $0.50
+- **Lowered MIN_PROFIT_TO_SELL to $0.50** — matches new TP, avoids extending past Deriv's own TP resolution
+- **Added unbiased up/down tick counting** — `upDownCount()` in lib/indicator-engine.js counts raw tick direction without needing a pre-chosen trade direction
+- **Fixed MULTDOWN-only stake minimum** — config.js now checks for both MULTUP and MULTDOWN before enforcing $1.00 minimum stake
+- **Fixed contract-monitor.js** — now recognizes MULTUP as a multiplier type (same as MULTDOWN) for all internal logic
+- **Fixed trade-executor.js** — profit calculation now uses correct formula per direction (entry-current for PUT, current-entry for CALL)
+- **Fixed connection-manager.js** — min stake query now tries MULTDOWN first, falls back to MULTUP if that fails
+- **Session 3 recorded** — BC-0001 ran 52 extensions, profit reached $0.1165, then a 20pt spike hit. Deriv SL didn't fire. Resolved LOSS -$0.50 on $2 stake. No WS disconnection occurred
+
+### In Progress
+- (none)
+
+### Blocked
+- **Reconnection path (direct WS listener) still untested** — WS stayed up during sessions 3-4, so the new direct `ws.on('close')` listener hasn't been validated. Will need a real WS drop to confirm it works
+- **Deriv `limit_order.stop_loss` still doesn't protect from single-tick spikes** — no code change can fix this; only risk reduction (lower multiplier, faster checks, dynamic direction) mitigates it
+
+## Key Decisions
+- **Switched from fixed PUT to dynamic direction** — 29 trade analysis proved all losses are from upward spikes against PUT. Trading with the trend (CALL when market rising, PUT when market falling) is the single highest-impact change
+- **Reduced multiplier from 200x to 100x** — halves spike damage. The 200x was amplifying losses without proportionate benefit since the market oscillates in a range (~13870-13930) where 100x still captures adequate profit
+- **Increased TAKE_PROFIT from $0.10 to $0.50** — Deriv's TP works reliably when the market moves favourably. A higher TP means fewer breakeven trades and more actual profit per win
+- **Replaced broken Observable close handler with direct WS listener** — the `onClose().subscribe()` pattern silently fails (handlers array is empty when WS drops). Direct `ws.on('close')` on the WebSocket object bypasses this entirely
+- **Removed hardcoded CONTRACT_TYPE=MULTDOWN** — contract type is now derived from the detected direction (CALL→MULTUP, PUT→MULTDOWN). The static `.env` value is only a fallback
+- **Removed dead indicators from scoring** — BB fired 1/29 times, EMA/ROC never fired. Direction detection now uses these for trend (not scoring), while scoring relies on RSI + momentum which are the only consistently active components
+
+## Next Steps
+- **Continue running the bot with dynamic direction** — monitor win rate, confirm TP fires at $0.50, watch for any direction-switching issues when market reverses
+- **Test reconnection** — either wait for a natural WS drop or trigger one deliberately to confirm the direct `ws.on('close')` listener fires and reconnects properly
+- **Monitor win rate with CALL direction** — confirm the hypothesis that trading with the upward bias turns losses into wins. If CALL trades also spike against us, may need a secondary filter
+- **Consider further reducing multiplier to 50x** if 100x still produces unacceptable drawdowns during spikes
+
+## Critical Context
+- **29 trades over 2 days**: 31% WR, -$3.68 total PnL, 62% of trades end at $0 (extension loop protects against losses)
+- **The 6 negative-PnL trades (-$3.82) account for 100% of losses** — all caused by upward price spikes. The 5 positive-PnL trades (+$0.14) are tiny in comparison
+- **Score=4 has 100% WR** (2/2) vs Score=6 at 27% WR (7/26). The extra 2 points from additional indicators add noise, not signal
+- **Only RSI and momentum ever contribute** to scores. BB (1/29), EMA (0/29), ROC (0/29) are effectively dead
+- **Session 3**: BC-0001 ran 52 extensions at $2 stake, profit hit $0.1165, then a 20pt upward spike resolved as LOSS -$0.50. The local SL check at 5s intervals cannot catch sub-second moves
+- **Two significant issues remain**: reconnection (untested) and single-tick spikes (mitigated by 100x multiplier but not eliminated)
+- **New approach**: dynamic direction detection uses 4 signals (tick momentum, EMA cross, ROC, RSI oversold/overbought) with weighted voting. Direction overrides config before `computeScore` is called, so the scoring engine naturally evaluates the correct RSI/BB/EMA/Momentum conditions for the chosen direction
+- **Session 4 confirmed working** — Trend correctly detected as PUT (up=2 down=5), dynamically mapped to MULTDOWN with 100x, SL=$0.10, TP=$0.50. Profit accumulating favourably (~$0.02 after 16 extensions)
+
+## Relevant Files
+- `backend/.env`: DYNAMIC_DIRECTION=true, MULTIPLIER=100, TAKE_PROFIT=0.50, MIN_PROFIT_TO_SELL=0.50, DIRECTION_LOOKBACK_TICKS=10, DIRECTION_MIN_ALIGNMENT=6
+- `backend/config.js:46-48`: Added `dynamicDirection`, `directionLookbackTicks`, `directionMinAlignment` config params
+- `backend/lib/indicator-engine.js:117-130`: Added `upDownCount(n)` — direction-agnostic tick counting for trend detection
+- `backend/src/indicator-engine.js:29-35`: Added `upDownCount`, `emaCross` to cached indicators and `getAll()` output
+- `backend/src/decision-engine.js:5-42`: `detectDirection()` — new function using up/down ticks, EMA cross, ROC, RSI for weighted trend voting
+- `backend/src/decision-engine.js:74-87`: `evaluate()` — now calls `detectDirection()` when `dynamicDirection=true`, overrides config direction before scoring
+- `backend/src/trade-executor.js:35-38`: `_toContractType(direction)` — maps 'PUT'→'MULTDOWN', 'CALL'→'MULTUP'
+- `backend/src/trade-executor.js:40-62`: `_buildContract(direction)` — now builds contract for any direction, uses dynamic contract type
+- `backend/src/trade-executor.js:156-183`: Contract purchase — now passes `actualContractType` to `_subscribeContract()` and emits
+- `backend/src/trade-executor.js:280-283`: Fixed profit calculation for MULTUP (CALL) direction using `currentSpot - entryPrice`
+- `backend/src/trade-executor.js:203-210`: Stores `contractType` on the subscription object for resolution path
+- `backend/src/connection-manager.js:278-290`: Queries both MULTDOWN and MULTUP for contract configs
+- `backend/src/connection-manager.js:292-330`: Min stake loop — tries MULTDOWN first, MULTUP as fallback
+- `backend/src/bot.js:66-69`: Added `_toContractType(direction)` helper on Bot class
+- `backend/src/bot.js:385-388`: Dynamic contract type in `_onTradeExecuted`, uses `actualCt` for multiplier check
+- `backend/src/bot.js:453-457`: Dynamic contract type in `_onContractResolved`, checks both MULTDOWN/MULTUP
+- `backend/src/contract-monitor.js:25`: `isMultiplier` now recognizes MULTUP too

@@ -6,7 +6,7 @@ require('winston-daily-rotate-file');
 
 function createLogger(options) {
   const logDir = options.logDir || path.join(__dirname, 'logs');
-  const level = options.level || 'info';
+  const level = (options.level || 'info').toLowerCase();
 
   if (!fs.existsSync(logDir)) {
     fs.mkdirSync(logDir, { recursive: true });

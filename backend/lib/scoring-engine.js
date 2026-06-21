@@ -1,96 +1,142 @@
-function detectSpikeInLastN(prices, n, threshold) {
-  if (prices.length < 2) return false;
-  const start = Math.max(0, prices.length - n);
-  for (let i = start + 1; i < prices.length; i++) {
-    const delta = Math.abs(prices[i] - prices[i - 1]);
-    if (delta >= threshold) return true;
-  }
-  return false;
-}
-
 function computeScore(indicators, config) {
   const rsiVal = indicators.rsi ? indicators.rsi.value : null;
-  const bb = indicators.bb;
-  const emaShort = indicators.emaShort;
-  const emaLong = indicators.emaLong;
+  const bb = indicators.bb || null;
+  const emaDistance = indicators.emaDistance;
+  const emaTrend = indicators.emaTrend;
   const rocVal = indicators.roc;
-  const deltas = indicators.deltas;
+  const deltaAlign = indicators.deltaAlignment;
   const prices = indicators._rawPrices || [];
+  const direction = config.direction || 'PUT';
 
-  const spikePresent = detectSpikeInLastN(prices, 50, config.spikeThreshold);
+  const components = { rsi: 0, momentum: 0, postSpike: 0, bb: 0, ema: 0, roc: 0 };
 
-  function scoreForDirection(dir) {
-    let total = 0;
-    const components = { rsi: 0, bb: 0, ema: 0, roc: 0, momentum: 0, postSpike: 0 };
+  const scoreThreshold = config.scoreThreshold || 6;
 
-    if (dir === 'CALL') {
-      if (rsiVal !== null && rsiVal < config.rsiOversold) {
+  // ---- RSI Component ----
+  if (direction === 'CALL') {
+    if (rsiVal !== null) {
+      if (rsiVal < 30) {
+        components.rsi = 4;
+      } else if (rsiVal < 35) {
         components.rsi = 3;
-      } else if (rsiVal !== null && rsiVal < 50) {
+      } else if (rsiVal < 45) {
+        components.rsi = 2;
+      } else if (rsiVal < 55) {
         components.rsi = 1;
+      } else if (rsiVal < 65) {
+        components.rsi = -1;
+      } else {
+        components.rsi = -3;
       }
+    }
+  } else {
+    if (rsiVal !== null) {
+      if (rsiVal > 70) {
+        components.rsi = 4;
+      } else if (rsiVal > 65) {
+        components.rsi = 3;
+      } else if (rsiVal > 55) {
+        components.rsi = 2;
+      } else if (rsiVal > 45) {
+        components.rsi = 1;
+      } else if (rsiVal > 35) {
+        components.rsi = -1;
+      } else {
+        components.rsi = -3;
+      }
+    }
+  }
 
-      if (bb && bb.belowLower) components.bb = 2;
+  // ---- Spike Protection (postSpike) ----
+  const POST_SPIKE_LOOKBACK = 50;
+  if (prices.length >= POST_SPIKE_LOOKBACK) {
+    const recentPrices = prices.slice(-POST_SPIKE_LOOKBACK);
+    const currentPrice = prices[prices.length - 1];
+    const minPrice = Math.min(...recentPrices);
+    const maxPrice = Math.max(...recentPrices);
+    const range = maxPrice - minPrice;
+    if (range > 0) {
+      const position = (currentPrice - minPrice) / range;
+      if (direction === 'CALL') {
+        if (position < 0.15) components.postSpike = 2;
+        else if (position > 0.85) components.postSpike = -3;
+      } else {
+        if (position < 0.15) components.postSpike = -3;
+        else if (position > 0.85) components.postSpike = 2;
+      }
+    }
+  }
 
-      if (emaShort !== null && emaLong !== null && emaShort > emaLong) components.ema = 1;
+  // ---- Momentum ----
+  if (deltaAlign !== null && deltaAlign !== undefined) {
+    if (deltaAlign >= 5) components.momentum = 3;
+    else if (deltaAlign >= 4) components.momentum = 2;
+    else if (deltaAlign >= 3) components.momentum = 1;
+    else if (deltaAlign <= 1) components.momentum = -1;
+  }
 
-      if (rocVal !== null && rocVal > 0) components.roc = 1;
-
-      if (deltas && deltas.length >= 3) {
-        const last3 = deltas.slice(-3);
-        if (last3.every(d => d > 0)) components.momentum = 2;
+  // ---- Bollinger Bands Component ----
+  if (bb !== null && bb !== undefined) {
+    if (direction === 'CALL') {
+      if (bb.belowLower) components.bb = 3;
+      else if (bb.aboveUpper) components.bb = -2;
+      else if (bb.middle !== null && prices.length >= 2) {
+        const currentPrice = prices[prices.length - 1];
+        const prevPrice = prices[prices.length - 2];
+        if (currentPrice < bb.middle && currentPrice > prevPrice) components.bb = 1;
       }
     } else {
-      if (rsiVal !== null && rsiVal > config.rsiOverbought) {
-        components.rsi = 3;
-      } else if (rsiVal !== null && rsiVal > 50) {
-        components.rsi = 1;
-      }
-
-      if (bb && bb.aboveUpper) components.bb = 2;
-
-      if (emaShort !== null && emaLong !== null && emaShort < emaLong) components.ema = 1;
-
-      if (rocVal !== null && rocVal < 0) components.roc = 1;
-
-      if (deltas && deltas.length >= 3) {
-        const last3 = deltas.slice(-3);
-        if (last3.every(d => d < 0)) components.momentum = 2;
+      if (bb.aboveUpper) components.bb = 3;
+      else if (bb.belowLower) components.bb = -2;
+      else if (bb.middle !== null && prices.length >= 2) {
+        const currentPrice = prices[prices.length - 1];
+        const prevPrice = prices[prices.length - 2];
+        if (currentPrice > bb.middle && currentPrice < prevPrice) components.bb = 1;
       }
     }
-
-    if (spikePresent) {
-      components.postSpike = -1;
-    }
-
-    for (const key of Object.keys(components)) {
-      total += components[key];
-    }
-
-    return { total, components };
   }
 
-  const call = scoreForDirection('CALL');
-  const put = scoreForDirection('PUT');
-  const spread = Math.abs(call.total - put.total);
-
-  let direction = null;
-  let enter = false;
-
-  if (call.total >= config.scoreThreshold && call.total > put.total && spread >= config.minScoreSpread) {
-    direction = 'CALL';
-    enter = true;
-  } else if (put.total >= config.scoreThreshold && put.total > call.total && spread >= config.minScoreSpread) {
-    direction = 'PUT';
-    enter = true;
+  // ---- EMA Component ----
+  if (emaTrend !== null && emaTrend !== undefined) {
+    if (direction === 'CALL') {
+      if (emaTrend < -0.001) components.ema = 2;
+      else if (emaTrend > 0.001) components.ema = -2;
+      else components.ema = 1;
+    } else {
+      if (emaTrend > 0.001) components.ema = 2;
+      else if (emaTrend < -0.001) components.ema = -2;
+      else components.ema = 1;
+    }
   }
+
+  // ---- ROC Component ----
+  if (rocVal !== null && rocVal !== undefined) {
+    const absRoc = Math.abs(rocVal);
+    if (direction === 'CALL') {
+      if (rocVal < -0.5) components.roc = 2;
+      else if (rocVal > 0.5) components.roc = -1;
+      else if (absRoc < 0.1) components.roc = -1;
+    } else {
+      if (rocVal > 0.5) components.roc = 2;
+      else if (rocVal < -0.5) components.roc = -1;
+      else if (absRoc < 0.1) components.roc = -1;
+    }
+  }
+
+  let total = 0;
+  for (const key of Object.keys(components)) {
+    total += components[key];
+  }
+
+  const score = total;
+  const enter = score >= scoreThreshold;
 
   return {
-    call,
-    put,
-    spread,
-    decision: { direction, enter },
+    score,
+    components,
+    direction,
+    enter,
   };
 }
 
-module.exports = { computeScore, detectSpikeInLastN };
+module.exports = { computeScore };

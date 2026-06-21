@@ -1,14 +1,24 @@
 class StakeManager {
   constructor(config) {
     this.config = config;
-    this.baseStake = config.baseStake || 0.50;
+    this.baseStake = config.baseStake || 2.00;
     this.minStake = config.minStake || 0.35;
-    this.maxStake = config.maxStake || 2.00;
-    this.mode = config.mode || 'fixed';
+    this.contractMinStake = config.contractMinStake || 0;
+    this.maxStake = config.maxStake || 5.00;
+    this.mode = config.stakeMode || 'fixed';
     this.riskPercent = config.riskPercent || 0.005;
-    this.useMartingale = config.useMartingale === true;
     this.currentStake = this.baseStake;
     this._consecutiveLosses = 0;
+  }
+
+  setContractMinStake(min) {
+    if (typeof min === 'number' && min > 0) {
+      this.contractMinStake = min;
+    }
+  }
+
+  _effectiveMinStake() {
+    return Math.max(this.minStake, this.contractMinStake);
   }
 
   getStake(accountBalance) {
@@ -23,10 +33,13 @@ class StakeManager {
 
   _fixedStake() {
     let stake = this.baseStake;
-    if (this.useMartingale) {
-      stake = this.baseStake * Math.pow(1.5, this._consecutiveLosses);
+    if (this._consecutiveLosses >= 3) {
+      stake = this.baseStake * 0.5;
     }
-    return Math.max(this.minStake, Math.min(this.maxStake, stake));
+    if (this._consecutiveLosses >= 5) {
+      stake = this.minStake;
+    }
+    return Math.max(this._effectiveMinStake(), Math.min(this.maxStake, stake));
   }
 
   _proportionalStake(accountBalance) {
@@ -35,10 +48,7 @@ class StakeManager {
       pct = Math.max(0.002, pct / 2);
     }
     let stake = accountBalance * pct;
-    if (this.useMartingale) {
-      stake *= Math.pow(1.5, this._consecutiveLosses);
-    }
-    return Math.max(this.minStake, Math.min(this.maxStake, stake));
+    return Math.max(this._effectiveMinStake(), Math.min(this.maxStake, stake));
   }
 
   recordResult(win) {

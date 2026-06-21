@@ -74,8 +74,8 @@ class SessionReporter {
       }
     }
 
-    const startBalance = trades.length > 0 ? (trades[0].balance_after || 0) - trades[0].pnl : 0;
-    const endBalance = trades.length > 0 ? (trades[trades.length - 1].balance_after || 0) : 0;
+    const startBalance = trades.length > 0 ? ((trades[0].balance_after ?? 0) - (trades[0].pnl ?? 0)) : 0;
+    const endBalance = trades.length > 0 ? (trades[trades.length - 1].balance_after ?? trades[trades.length - 1].balance_before ?? 0) : 0;
     const maxDrawdown = this._calcMaxDrawdown(trades);
     const maxConsecutiveWins = this._calcMaxConsecutive(trades, 1);
     const maxConsecutiveLosses = this._calcMaxConsecutive(trades, 0);
@@ -129,7 +129,7 @@ class SessionReporter {
   _calcMaxDrawdown(trades) {
     let peak = 0, maxDd = 0;
     for (const t of trades) {
-      const bal = t.balance_after || 0;
+      const bal = t.balance_after ?? 0;
       if (bal > peak) peak = bal;
       const dd = peak - bal;
       if (dd > maxDd) maxDd = dd;

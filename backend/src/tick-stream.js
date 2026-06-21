@@ -12,6 +12,7 @@ class TickStream {
     this._subscription = null;
     this._listeners = {};
     this._storage = null;
+    this._bufferReadyFired = false;
 
     if (config.storeTicks !== false) {
       this._storage = new Storage();
@@ -32,28 +33,25 @@ class TickStream {
 
   async start() {
     if (!this.connectionManager.isAuthorized()) {
-      console.log('[TS] NOT AUTHORIZED, throwing');
+      this.logger.error('TickStream', 'Not authorized to subscribe');
       throw new Error('Cannot subscribe: not authorized');
     }
 
-    console.log('[TS] Starting tick subscription...');
     this.logger.info('TickStream', `Subscribing to ${this.config.symbol} ticks`);
     const observable = this.connectionManager.api.subscribe({ ticks: this.config.symbol });
-    console.log('[TS] Got observable, subscribing...');
     this._subscription = observable.subscribe({
       next: (data) => this._onTick(data),
       error: (err) => {
-        console.log('[TS] Subscription error:', err.message);
         this.logger.error('TickStream', `Subscription error: ${err.message}`);
         this._emit('error', err);
       },
     });
-    console.log('[TS] Subscribed successfully');
+    this.logger.info('TickStream', 'Subscribed successfully');
   }
 
   stop() {
     if (this._subscription) {
-      try { this._subscription.unsubscribe(); } catch {}
+      try { this._subscription.unsubscribe(); } catch (err) { this.logger.debug('TickStream', `Unsubscribe error: ${err.message}`); }
       this._subscription = null;
     }
     if (this._storage) {
@@ -90,7 +88,8 @@ class TickStream {
 
     this._emit('tick', { epoch, quote });
 
-    if (this.buffer.length >= this.config.minTicksBeforeTrade && this.buffer.length === 1) {
+    if (!this._bufferReadyFired && this.buffer.length >= this.config.minTicksBeforeTrade) {
+      this._bufferReadyFired = true;
       this._emit('bufferReady');
     }
   }
@@ -99,6 +98,18 @@ class TickStream {
   getPriceCount() { return this.buffer.length; }
   isReady() { return this.buffer.length >= this.config.minTicksBeforeTrade; }
   getLastPrice() { return this.buffer.length > 0 ? this.buffer[this.buffer.length - 1].quote : null; }
+
+  getStoredTicks(symbol, limit = 5000) {
+    if (!this._storage || !this._storage.db) return [];
+    try {
+      const rows = this._storage.db
+        .prepare('SELECT epoch, quote FROM ticks WHERE symbol = ? ORDER BY id DESC LIMIT ?')
+        .all(symbol, limit);
+      return rows.reverse();
+    } catch {
+      return [];
+    }
+  }
 }
 
 module.exports = TickStream;

@@ -1,0 +1,47 @@
+{
+  "date": "2026-06-08",
+  "symbol": "BOOM1000",
+  "direction": "PUT",
+  "parameters": {
+    "durationTicks": 10,
+    "scoreThreshold": 2,
+    "cooldownTicks": 5,
+    "rsiOversold": 35,
+    "rsiOverbought": 65,
+    "bbPeriod": 20,
+    "bbStdDev": 2,
+    "emaShortPeriod": 5,
+    "emaLongPeriod": 20,
+    "rocPeriod": 5
+  },
+  "account": {
+    "startBalance": 11.62,
+    "endBalance": 10,
+    "dailyReturn": -0.1394148020654044,
+    "totalPnL": -2.58,
+    "maxDrawdown": 2.539999999999999
+  },
+  "trades": {
+    "total": 9,
+    "wins": 2,
+    "losses": 7,
+    "winRate": 0.2222222222222222,
+    "avgWin": 0.45999999999999996,
+    "avgLoss": 0.5,
+    "profitFactor": 0.26285714285714284,
+    "maxConsecutiveWins": 1,
+    "maxConsecutiveLosses": 5,
+    "averageStake": 0.5,
+    "totalStake": 4.5
+  },
+  "timeAnalysis": {
+    "bestHour": 5,
+    "worstHour": 5,
+    "bestHourWR": 0.2222222222222222,
+    "worstHourWR": 0.2222222222222222,
+    "tradesByHour": {
+      "5": 9,
+      "5_wins": 2
+    }
+  }
+}

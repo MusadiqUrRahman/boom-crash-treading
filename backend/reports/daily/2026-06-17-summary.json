@@ -1,0 +1,53 @@
+{
+  "date": "2026-06-17",
+  "symbol": "CRASH1000",
+  "direction": "CALL",
+  "parameters": {
+    "durationTicks": 10,
+    "scoreThreshold": 3,
+    "cooldownTicks": 10,
+    "rsiOversold": 35,
+    "rsiOverbought": 65,
+    "bbPeriod": 20,
+    "bbStdDev": 2,
+    "emaShortPeriod": 5,
+    "emaLongPeriod": 20,
+    "rocPeriod": 5
+  },
+  "account": {
+    "startBalance": 9985.55,
+    "endBalance": 9983.10677148501,
+    "dailyReturn": -0.0002446764089097478,
+    "totalPnL": -0.27322851499007506,
+    "maxDrawdown": 2.4132285149880772
+  },
+  "trades": {
+    "total": 4,
+    "wins": 0,
+    "losses": 4,
+    "winRate": 0,
+    "avgWin": 0,
+    "avgLoss": 0.06830712874751876,
+    "profitFactor": 0,
+    "maxConsecutiveWins": 0,
+    "maxConsecutiveLosses": 4,
+    "averageStake": 2,
+    "totalStake": 8
+  },
+  "timeAnalysis": {
+    "bestHour": 0,
+    "worstHour": 0,
+    "bestHourWR": 0,
+    "worstHourWR": 1,
+    "tradesByHour": {
+      "4": 1,
+      "6": 1,
+      "7": 1,
+      "12": 1,
+      "4_wins": 0,
+      "6_wins": 0,
+      "7_wins": 0,
+      "12_wins": 0
+    }
+  }
+}

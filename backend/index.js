@@ -6,8 +6,21 @@ const { createLogger } = require('./logging-config');
 const HealthMonitor = require('./src/health-monitor');
 const AlertManager = require('./src/alert-manager');
 const SessionReporter = require('./src/session-reporter');
+const BotWebSocketServer = require('./ws-server');
 
 console.log('Boom Crash Trading Bot starting...');
+
+const HEALTH_PORT = 3456;
+const WS_PORT = 3457;
+
+function freePorts() {
+  try {
+    require('child_process').execSync(
+      `for /f "tokens=5" %a in ('netstat -ano ^| findstr ":3456\\|:3457" ^| findstr LISTENING') do taskkill /f /pid %a 2>nul`,
+      { stdio: 'pipe', timeout: 5000 }
+    );
+  } catch {}
+}
 
 function printConfig(config, logger) {
   logger.info('Config', '=== Bot Configuration ===');
@@ -30,6 +43,7 @@ function printConfig(config, logger) {
 }
 
 async function main() {
+  freePorts();
   console.log('[1] Loading config...');
   const config = loadConfig();
   console.log('[2] Config loaded. Symbol=' + config.symbol + ' dryRun=' + config.dryRun + ' logDir=' + config.logDir);
@@ -54,9 +68,9 @@ async function main() {
   const alertManager = new AlertManager(config, logger);
   const healthMonitor = new HealthMonitor(bot, logger, parseInt(process.env.HEALTH_PORT || '3456', 10));
   const sessionReporter = new SessionReporter(config, logger);
+  const wsServer = new BotWebSocketServer(bot, logger, parseInt(process.env.WS_PORT || '3457', 10));
   console.log('[10] All created');
 
-  let lastAlertBalance = config.startingBalance || 100;
   let lastConsecutiveLossAlert = 0;
 
   bot.riskManager._onBalanceChange = (oldBal, newBal) => {
@@ -98,6 +112,7 @@ async function main() {
     alertManager.send('WARN', 'Main', 'SIGINT received — stopping bot');
     await bot.stop();
     healthMonitor.stop();
+    wsServer.stop();
     process.exit(0);
   });
 
@@ -106,6 +121,7 @@ async function main() {
     alertManager.send('ERROR', 'Main', `Uncaught exception: ${err.message}`);
     await bot.stop().catch(() => {});
     healthMonitor.stop();
+    wsServer.stop();
     process.exit(1);
   });
 
@@ -144,6 +160,7 @@ async function main() {
       clearInterval(reportInterval);
       await bot.stop();
       healthMonitor.stop();
+      wsServer.stop();
       process.exit(0);
     } else if (cmd === 'status') {
       const s = bot.getStatus();
@@ -158,7 +175,8 @@ async function main() {
 
   console.log('[15] Starting health monitor...');
   healthMonitor.start();
-  console.log('[16] Health monitor started');
+  wsServer.start();
+  console.log('[16] Health monitor + WS server started');
   alertManager.alertStarted(config);
   console.log('[17] Alert sent, starting bot...');
 

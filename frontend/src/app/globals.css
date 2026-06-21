@@ -1,0 +1,456 @@
+@import "tailwindcss";
+
+/* ──────────────────────────────────────────────
+   THEME — all colors are dark; no white anywhere
+   ────────────────────────────────────────────── */
+
+@theme inline {
+  --color-bg: #06060d;
+  --color-bg-elevated: #0c0c18;
+  --color-bg-hover: #12121f;
+  --color-bg-active: #181830;
+  --color-border: #1a1a35;
+  --color-border-light: #252548;
+  --color-text-primary: #d0d0ec;
+  --color-text-secondary: #7878a8;
+  --color-text-muted: #484870;
+  --color-accent: #3b82f6;
+  --color-accent-hover: #60a5fa;
+  --color-accent-muted: rgba(59, 130, 246, 0.12);
+  --color-win: #22c55e;
+  --color-win-bg: rgba(34, 197, 94, 0.08);
+  --color-loss: #ef4444;
+  --color-loss-bg: rgba(239, 68, 68, 0.08);
+  --color-call: #22c55e;
+  --color-put: #ef4444;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #3b82f6;
+  --color-success: #22c55e;
+  --color-background: #06060d;
+  --color-foreground: #d0d0ec;
+  --color-card: #0c0c18;
+  --color-card-foreground: #d0d0ec;
+  --color-popover: #0c0c18;
+  --color-popover-foreground: #d0d0ec;
+  --color-primary: #3b82f6;
+  --color-primary-foreground: #06060d;
+  --color-secondary: #12121f;
+  --color-secondary-foreground: #d0d0ec;
+  --color-muted: #181830;
+  --color-muted-foreground: #7878a8;
+  --color-destructive: #ef4444;
+  --color-destructive-foreground: #06060d;
+  --color-input: #1a1a35;
+  --color-ring: #3b82f6;
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/* ──────────────────────────────────────────────
+   BASE RESET — kill UA white, force dark scheme
+   ────────────────────────────────────────────── */
+html {
+  background: var(--color-bg);
+  color-scheme: dark;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-foreground);
+  font-family: var(--font-sans), system-ui, sans-serif;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { box-shadow: 0 0 8px rgba(59, 130, 246, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.5); }
+}
+
+@keyframes flash-green {
+  0% { background-color: rgba(34, 197, 94, 0.25); }
+  100% { background-color: transparent; }
+}
+
+@keyframes flash-red {
+  0% { background-color: rgba(239, 68, 68, 0.25); }
+  100% { background-color: transparent; }
+}
+
+@keyframes breathe {
+  0%, 100% { opacity: 0.5; }
+  50% { opacity: 1; }
+}
+
+.glass-card {
+  background: linear-gradient(135deg, rgba(8, 8, 18, 0.75) 0%, rgba(6, 6, 14, 0.85) 100%);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(26, 26, 53, 0.5);
+}
+
+.glass-card:hover {
+  border-color: rgba(59, 130, 246, 0.25);
+  background: linear-gradient(135deg, rgba(10, 10, 22, 0.85) 0%, rgba(8, 8, 18, 0.95) 100%);
+}
+
+.glow-text {
+  text-shadow: 0 0 20px rgba(59, 130, 246, 0.25), 0 0 40px rgba(59, 130, 246, 0.08);
+}
+
+.page-gradient {
+  background: radial-gradient(ellipse 70% 40% at 50% -15%, rgba(59, 130, 246, 0.05) 0%, transparent 60%),
+              radial-gradient(ellipse 40% 25% at 80% 80%, rgba(34, 197, 94, 0.025) 0%, transparent 50%),
+              radial-gradient(ellipse 40% 25% at 20% 80%, rgba(239, 68, 68, 0.025) 0%, transparent 50%);
+}
+
+@keyframes price-flash-down {
+  0% { background-color: rgba(239, 68, 68, 0.2); }
+  100% { background-color: transparent; }
+}
+
+@keyframes status-fade {
+  0% { opacity: 0.6; transform: translateY(1px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+
+/* ============================================
+   GLOBAL INTERACTION STYLES
+   ============================================ */
+
+/* Cursor & baseline transition for all interactive elements */
+button, a, [role="button"], summary, label, select,
+input[type="checkbox"], input[type="radio"], input[type="text"],
+input[type="search"], input[type="number"] {
+  cursor: pointer;
+  transition: transform 0.1s cubic-bezier(0.34, 1.56, 0.64, 1),
+              box-shadow 0.12s ease,
+              border-color 0.12s ease,
+              background-color 0.12s ease;
+}
+
+button:active:not(:disabled), a:active:not(.disabled),
+[role="button"]:active:not(:disabled),
+select:active:not(:disabled) {
+  transform: scale(0.93);
+  transition-duration: 0.04s !important;
+}
+
+/* ============================================
+   SIDEBAR NAVIGATION
+   ============================================ */
+nav a {
+  position: relative;
+}
+
+nav a::after {
+  content: '';
+  position: absolute;
+  inset: 4px 4px;
+  border-radius: 6px;
+  opacity: 0;
+  transition: opacity 0.2s ease;
+  pointer-events: none;
+}
+
+nav a:not([class*="bg-"]):hover::after {
+  opacity: 1;
+  background: linear-gradient(90deg, rgba(59,130,246,0.04) 0%, transparent 100%);
+}
+
+/* ============================================
+   SELECT / DROPDOWN / INPUT FOCUS STATES
+   ============================================ */
+select:focus, input[type="text"]:focus, input[type="search"]:focus,
+input[type="number"]:focus, textarea:focus {
+  outline: none;
+  border-color: var(--color-accent) !important;
+  box-shadow: 0 0 0 1px rgba(59, 130, 246, 0.3),
+              0 0 16px -4px rgba(59, 130, 246, 0.15) !important;
+  transition: box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+/* ============================================
+   TABLE ROW INTERACTIONS
+   ============================================ */
+tr.cursor-pointer {
+  position: relative;
+}
+
+tr.cursor-pointer td:first-child {
+  border-left: 2px solid transparent;
+  transition: border-color 0.1s ease, background-color 0.1s ease, box-shadow 0.1s ease;
+}
+
+tr.cursor-pointer:hover {
+  background: linear-gradient(90deg, rgba(59,130,246,0.08) 0%, transparent 50%) !important;
+}
+
+tr.cursor-pointer:hover td:first-child {
+  border-left-color: var(--color-accent);
+  box-shadow: inset 3px 0 12px -4px rgba(59, 130, 246, 0.35);
+}
+
+tr.cursor-pointer:active {
+  background: linear-gradient(90deg, rgba(59,130,246,0.15) 0%, transparent 30%) !important;
+  transition-duration: 0.03s;
+}
+
+tr.cursor-pointer:active td:first-child {
+  border-left-color: var(--color-accent-hover);
+  box-shadow: inset 3px 0 16px -3px rgba(59, 130, 246, 0.5);
+}
+
+@keyframes row-enter {
+  from { opacity: 0; transform: translateX(-8px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+tr.cursor-pointer[data-new] {
+  animation: row-enter 0.3s ease-out;
+}
+
+/* ============================================
+   STATUS BAR — DOT GLOW & LABEL
+   ============================================ */
+.status-dot {
+  transition: box-shadow 0.3s ease, background-color 0.3s ease;
+  will-change: box-shadow, transform;
+}
+
+.status-dot[data-state="RUNNING"],
+.status-dot[data-state="AUTHORIZED"] {
+  box-shadow: 0 0 12px rgba(34, 197, 94, 0.6), 0 0 28px rgba(34, 197, 94, 0.2);
+  animation: pulse-dot 1.5s ease-in-out infinite;
+}
+
+.status-dot[data-state="ERROR"] {
+  box-shadow: 0 0 14px rgba(239, 68, 68, 0.7), 0 0 30px rgba(239, 68, 68, 0.25);
+  animation: pulse-dot 0.6s ease-in-out infinite;
+}
+
+.status-dot[data-state="STOPPED"],
+.status-dot[data-state="DISCONNECTED"],
+.status-dot[data-state="INIT"] {
+  box-shadow: 0 0 8px rgba(113, 113, 122, 0.35);
+}
+
+.status-dot[data-state="COOLDOWN"],
+.status-dot[data-state="SKIP"],
+.status-dot[data-state="STOPPING"],
+.status-dot[data-state="CONNECTING"],
+.status-dot[data-state="AUTHORIZING"] {
+  box-shadow: 0 0 12px rgba(245, 158, 11, 0.6), 0 0 24px rgba(245, 158, 11, 0.2);
+  animation: pulse-dot 0.9s ease-in-out infinite;
+}
+
+.status-dot[data-state="IN_POSITION"],
+.status-dot[data-state="RESOLVING"] {
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.7), 0 0 28px rgba(59, 130, 246, 0.25);
+}
+
+.status-dot[data-state="ENTERING"],
+.status-dot[data-state="SCORING"],
+.status-dot[data-state="DECISION"] {
+  box-shadow: 0 0 14px rgba(59, 130, 246, 0.6), 0 0 28px rgba(59, 130, 246, 0.2);
+  animation: pulse-dot 0.8s ease-in-out infinite;
+}
+
+.status-dot[data-state="COLLECTING"] {
+  box-shadow: 0 0 8px rgba(161, 161, 170, 0.35);
+}
+
+.status-label {
+  transition: color 0.25s ease, opacity 0.25s ease;
+}
+
+/* ============================================
+   CONNECTION STATE COLOR — RIGHT SIDE
+   ============================================ */
+.conn-state {
+  transition: text-shadow 0.3s ease, color 0.25s ease, opacity 0.25s ease;
+  will-change: color, text-shadow;
+}
+
+.conn-state[data-conn="AUTHORIZED"],
+.conn-state[data-conn="CONNECTED"] {
+  text-shadow: 0 0 12px rgba(34, 197, 94, 0.5), 0 0 24px rgba(34, 197, 94, 0.15);
+}
+
+.conn-state[data-conn="DISCONNECTED"],
+.conn-state[data-conn="ERROR"] {
+  text-shadow: 0 0 12px rgba(239, 68, 68, 0.5), 0 0 24px rgba(239, 68, 68, 0.15);
+}
+
+.conn-state[data-conn="CONNECTING"] {
+  text-shadow: 0 0 12px rgba(245, 158, 11, 0.5), 0 0 24px rgba(245, 158, 11, 0.15);
+  animation: breathe 1s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+body {
+  font-family: var(--font-sans), system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+.font-mono {
+  font-family: var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace;
+}
+
+.font-mono.tabular-nums,
+.tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.text-mono {
+  font-family: var(--font-mono), 'JetBrains Mono', 'Fira Code', monospace;
+  font-variant-numeric: tabular-nums;
+}
+
+/* ============================================
+   ADVANCED ANIMATIONS
+   ============================================ */
+
+@keyframes scale-in {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+@keyframes fade-in-up {
+  from { transform: translateY(12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes fade-in-down {
+  from { transform: translateY(-12px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes slide-in-left {
+  from { transform: translateX(-16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes slide-in-right {
+  from { transform: translateX(16px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+@keyframes number-ticker {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes progress-fill {
+  from { width: 0%; }
+}
+
+@keyframes shimmer-slide {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.8); opacity: 1; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes glow-expand {
+  0% { box-shadow: 0 0 4px rgba(59, 130, 246, 0.3); }
+  50% { box-shadow: 0 0 20px rgba(59, 130, 246, 0.6); }
+  100% { box-shadow: 0 0 4px rgba(59, 130, 246, 0.3); }
+}
+
+@keyframes slide-up-fade {
+  from { transform: translateY(8px); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+
+@keyframes confetti-fall {
+  0% { transform: translateY(-10px) rotate(0deg); opacity: 1; }
+  100% { transform: translateY(60px) rotate(720deg); opacity: 0; }
+}
+
+@keyframes bounce-in {
+  0% { transform: scale(0.3); opacity: 0; }
+  50% { transform: scale(1.05); }
+  70% { transform: scale(0.9); }
+  100% { transform: scale(1); opacity: 1; }
+}
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes dash {
+  to { stroke-dashoffset: 0; }
+}
+
+@keyframes ripple-effect {
+  0% { transform: scale(1); opacity: 0.4; }
+  100% { transform: scale(2.5); opacity: 0; }
+}
+
+@keyframes border-pulse {
+  0%, 100% { border-color: rgba(59, 130, 246, 0.3); }
+  50% { border-color: rgba(59, 130, 246, 0.6); }
+}
+
+@keyframes live-dot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes count-up {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes slide-expand {
+  from { max-height: 0; opacity: 0; }
+  to { max-height: 500px; opacity: 1; }
+}
+
+/* Utility animation classes */
+.animate-scale-in { animation: scale-in 0.3s ease-out; }
+.animate-fade-in-up { animation: fade-in-up 0.4s ease-out; }
+.animate-fade-in-down { animation: fade-in-down 0.4s ease-out; }
+.animate-slide-in-left { animation: slide-in-left 0.3s ease-out; }
+.animate-slide-in-right { animation: slide-in-right 0.3s ease-out; }
+.animate-number-ticker { animation: number-ticker 0.5s ease-out; }
+.animate-progress-fill { animation: progress-fill 0.8s ease-out; }
+.animate-pulse-ring { animation: pulse-ring 1.5s ease-out infinite; }
+.animate-glow-expand { animation: glow-expand 2s ease-in-out infinite; }
+.animate-bounce-in { animation: bounce-in 0.5s cubic-bezier(0.68, -0.55, 0.265, 1.55); }
+.animate-border-pulse { animation: border-pulse 2s ease-in-out infinite; }
+.animate-live-dot { animation: live-dot 1.5s ease-in-out infinite; }
+.animate-count-up { animation: count-up 0.4s ease-out; }
+.animate-fade-in { animation: fade-in 0.3s ease-out; }
+
+/* Staggered animation delays */
+.delay-1 { animation-delay: 50ms; }
+.delay-2 { animation-delay: 100ms; }
+.delay-3 { animation-delay: 150ms; }
+.delay-4 { animation-delay: 200ms; }
+.delay-5 { animation-delay: 250ms; }
+.delay-6 { animation-delay: 300ms; }
+.delay-7 { animation-delay: 350ms; }
+.delay-8 { animation-delay: 400ms; }
+
+/* Glass morphism enhancements - base styles defined above */
+.glass-card {
+  transition: border-color 0.3s ease, background 0.3s ease, box-shadow 0.3s ease;
+}

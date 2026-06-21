@@ -3,10 +3,14 @@ const path = require('path');
 const fs = require('fs');
 
 class TradeLogger {
-  constructor(dbPath) {
+  constructor(dbPath, logger, defaultContractType) {
     this.dbPath = dbPath;
+    this.logger = logger || null;
+    this.defaultContractType = defaultContractType || 'MULTDOWN';
     this.db = null;
     this.insertStmt = null;
+    this.insertSignalStmt = null;
+    this.updateSignalStmt = null;
   }
 
   init() {
@@ -46,13 +50,80 @@ class TradeLogger {
         pnl REAL,
         balance_after REAL,
         dry_run INTEGER DEFAULT 1,
+        contract_type TEXT DEFAULT 'CALL',
+        multiplier INTEGER,
+        stop_loss REAL,
+        take_profit REAL,
+        exit_reason TEXT,
         created_at TEXT DEFAULT (datetime('now'))
       );
 
       CREATE INDEX IF NOT EXISTS idx_trades_epoch ON trades(entry_epoch);
       CREATE INDEX IF NOT EXISTS idx_trades_win ON trades(win);
       CREATE INDEX IF NOT EXISTS idx_trades_created ON trades(created_at);
+
+      CREATE TABLE IF NOT EXISTS daily_stats (
+        date TEXT NOT NULL PRIMARY KEY,
+        symbol TEXT NOT NULL,
+        trades INTEGER DEFAULT 0,
+        wins INTEGER DEFAULT 0,
+        losses INTEGER DEFAULT 0,
+        pnl REAL DEFAULT 0,
+        balance REAL DEFAULT 0,
+        updated_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS signals (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp TEXT NOT NULL,
+        epoch INTEGER NOT NULL,
+        price REAL NOT NULL,
+        direction TEXT NOT NULL,
+        score INTEGER NOT NULL,
+        score_rsi INTEGER DEFAULT 0,
+        score_bb INTEGER DEFAULT 0,
+        score_ema INTEGER DEFAULT 0,
+        score_roc INTEGER DEFAULT 0,
+        score_momentum INTEGER DEFAULT 0,
+        score_spike_penalty INTEGER DEFAULT 0,
+        indicators_json TEXT,
+        contract_type TEXT,
+        contract_id TEXT,
+        trade_id INTEGER,
+        resolved INTEGER DEFAULT 0,
+        outcome TEXT,
+        pnl REAL,
+        created_at TEXT DEFAULT (datetime('now'))
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_signals_epoch ON signals(epoch);
+      CREATE INDEX IF NOT EXISTS idx_signals_resolved ON signals(resolved);
+      CREATE INDEX IF NOT EXISTS idx_signals_score ON signals(score);
     `);
+
+    this._runMigrations();
+  }
+
+  _runMigrations() {
+    const hasContractType = this.db.prepare(
+      "SELECT COUNT(*) AS cnt FROM pragma_table_info('trades') WHERE name = 'contract_type'"
+    ).get().cnt;
+    if (hasContractType === 0) {
+      this.logger?.info('TradeLogger', 'Running migration: add contract_type to trades');
+      this.db.exec("ALTER TABLE trades ADD COLUMN contract_type TEXT DEFAULT 'CALL'");
+      this.db.exec("ALTER TABLE trades ADD COLUMN multiplier INTEGER");
+      this.db.exec("ALTER TABLE trades ADD COLUMN stop_loss REAL");
+      this.db.exec("ALTER TABLE trades ADD COLUMN take_profit REAL");
+      this.db.exec("ALTER TABLE trades ADD COLUMN exit_reason TEXT");
+    }
+
+    const hasBalance = this.db.prepare(
+      "SELECT COUNT(*) AS cnt FROM pragma_table_info('daily_stats') WHERE name = 'balance'"
+    ).get().cnt;
+    if (hasBalance === 0) {
+      this.logger?.info('TradeLogger', 'Running migration: add balance to daily_stats');
+      this.db.exec("ALTER TABLE daily_stats ADD COLUMN balance REAL DEFAULT 0");
+    }
   }
 
   _prepareStatements() {
@@ -61,13 +132,34 @@ class TradeLogger {
         contract_id, local_id, symbol, direction, stake, payout_rate,
         entry_price, exit_price, entry_epoch, exit_epoch, duration_ticks,
         score, score_rsi, score_bb, score_ema, score_roc, score_momentum,
-        win, pnl, balance_after, dry_run
+        win, pnl, balance_after, dry_run,
+        contract_type, multiplier, stop_loss, take_profit, exit_reason
       ) VALUES (
         @contractId, @localId, @symbol, @direction, @stake, @payoutRate,
         @entryPrice, @exitPrice, @entryEpoch, @exitEpoch, @durationTicks,
         @score, @scoreRsi, @scoreBb, @scoreEma, @scoreRoc, @scoreMomentum,
-        @win, @pnl, @balanceAfter, @dryRun
+        @win, @pnl, @balanceAfter, @dryRun,
+        @contractType, @multiplier, @stopLoss, @takeProfit, @exitReason
       )
+    `);
+
+    this.insertSignalStmt = this.db.prepare(`
+      INSERT INTO signals (
+        timestamp, epoch, price, direction, score,
+        score_rsi, score_bb, score_ema, score_roc, score_momentum,
+        score_spike_penalty, indicators_json, contract_type
+      ) VALUES (
+        @timestamp, @epoch, @price, @direction, @score,
+        @scoreRsi, @scoreBb, @scoreEma, @scoreRoc, @scoreMomentum,
+        @spikePenalty, @indicatorsJson, @contractType
+      )
+    `);
+
+    this.updateSignalStmt = this.db.prepare(`
+      UPDATE signals SET
+        resolved = 1, outcome = @outcome, pnl = @pnl,
+        contract_id = @contractId, trade_id = @tradeId
+      WHERE id = @signalId
     `);
   }
 
@@ -93,13 +185,64 @@ class TradeLogger {
       scoreMomentum: (record.scoreComponents && record.scoreComponents.momentum) || 0,
       win: record.win ? 1 : 0,
       pnl: record.pnl,
-      balanceAfter: record.balanceAfter || null,
+      balanceAfter: record.balanceAfter ?? null,
       dryRun: record.dryRun ? 1 : 0,
+      contractType: record.contractType || 'CALL',
+      multiplier: record.multiplier || null,
+      stopLoss: record.stopLoss || null,
+      takeProfit: record.takeProfit || null,
+      exitReason: record.exitReason || null,
     });
     return info.lastInsertRowid;
   }
 
+  logSignal(signalData) {
+    if (!this.db) this.init();
+    const info = this.insertSignalStmt.run({
+      timestamp: signalData.timestamp || new Date().toISOString(),
+      epoch: signalData.epoch || Math.floor(Date.now() / 1000),
+      price: signalData.price,
+      direction: signalData.direction,
+      score: signalData.score,
+      scoreRsi: (signalData.scoreComponents && signalData.scoreComponents.rsi) || 0,
+      scoreBb: (signalData.scoreComponents && signalData.scoreComponents.bb) || 0,
+      scoreEma: (signalData.scoreComponents && signalData.scoreComponents.ema) || 0,
+      scoreRoc: (signalData.scoreComponents && signalData.scoreComponents.roc) || 0,
+      scoreMomentum: (signalData.scoreComponents && signalData.scoreComponents.momentum) || 0,
+      spikePenalty: (signalData.scoreComponents && signalData.scoreComponents.spikePenalty) || 0,
+      indicatorsJson: signalData.indicatorsJson || null,
+      contractType: signalData.contractType || this.defaultContractType,
+    });
+    return info.lastInsertRowid;
+  }
+
+  updateSignalWithTrade(signalId, outcome, pnl, contractId, tradeId) {
+    if (!this.db) this.init();
+    this.updateSignalStmt.run({
+      signalId,
+      outcome: outcome || null,
+      pnl: pnl || null,
+      contractId: contractId || null,
+      tradeId: tradeId || null,
+    });
+  }
+
+  getSignals(limit = 100, offset = 0) {
+    if (!this.db) this.init();
+    return this.db.prepare(
+      'SELECT * FROM signals ORDER BY id DESC LIMIT ? OFFSET ?'
+    ).all(limit, offset);
+  }
+
+  getPendingSignals() {
+    if (!this.db) this.init();
+    return this.db.prepare(
+      "SELECT * FROM signals WHERE resolved = 0 ORDER BY id DESC LIMIT 50"
+    ).all();
+  }
+
   getTradesToday() {
+    if (!this.db) this.init();
     const today = new Date().toISOString().slice(0, 10);
     return this.db.prepare(
       "SELECT * FROM trades WHERE DATE(created_at) = ? ORDER BY id"
@@ -107,6 +250,7 @@ class TradeLogger {
   }
 
   getDailyStats() {
+    if (!this.db) this.init();
     const today = new Date().toISOString().slice(0, 10);
     const row = this.db.prepare(`
       SELECT 
@@ -115,14 +259,26 @@ class TradeLogger {
         SUM(CASE WHEN win = 0 THEN 1 ELSE 0 END) AS losses,
         COALESCE(SUM(CASE WHEN win = 1 THEN pnl ELSE 0 END), 0) AS profit,
         COALESCE(SUM(CASE WHEN win = 0 THEN pnl ELSE 0 END), 0) AS loss,
-        COALESCE(SUM(pnl), 0) AS netPnl,
-        COALESCE(SUM(CASE WHEN win = 0 THEN 1 ELSE 0 END), 0) AS consecutiveLosses
+        COALESCE(SUM(pnl), 0) AS netPnl
       FROM trades WHERE DATE(created_at) = ?
     `).get(today);
+
+    const recentTrades = this.db.prepare(`
+      SELECT win FROM trades WHERE DATE(created_at) = ? ORDER BY created_at DESC
+    `).all(today);
+
+    let consecutiveLosses = 0;
+    for (const t of recentTrades) {
+      if (t.win === 0) consecutiveLosses++;
+      else break;
+    }
+    row.consecutiveLosses = consecutiveLosses;
+
     return row;
   }
 
   getTodayStats() {
+    if (!this.db) this.init();
     const today = new Date().toISOString().slice(0, 10);
     const row = this.db.prepare(`
       SELECT 
@@ -148,7 +304,24 @@ class TradeLogger {
     return { ...row, consecutiveLosses };
   }
 
+  logDailyStats(date, symbol, trades, wins, losses, pnl, balance) {
+    if (!this.db) this.init();
+    const result = this.db.prepare(`
+      UPDATE daily_stats SET
+        symbol = ?, trades = ?, wins = ?, losses = ?, pnl = ?, balance = ?,
+        updated_at = datetime('now')
+      WHERE date = ?
+    `).run(symbol, trades, wins, losses, pnl, balance, date);
+    if (result.changes === 0) {
+      this.db.prepare(`
+        INSERT INTO daily_stats (date, symbol, trades, wins, losses, pnl, balance)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(date, symbol, trades, wins, losses, pnl, balance);
+    }
+  }
+
   getRecentTrades(limit) {
+    if (!this.db) this.init();
     return this.db.prepare(
       'SELECT * FROM trades ORDER BY id DESC LIMIT ?'
     ).all(limit || 20);

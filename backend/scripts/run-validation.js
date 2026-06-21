@@ -34,8 +34,8 @@ function loadTicks(dbPath, symbol) {
 }
 
 function verifyTestDataUnseen(testEpochs, trainEpochs) {
-  const testMin = Math.min(...testEpochs);
-  const trainMax = Math.max(...trainEpochs);
+  const testMin = testEpochs.reduce((a, b) => Math.min(a, b), Infinity);
+  const trainMax = trainEpochs.reduce((a, b) => Math.max(a, b), -Infinity);
   return testMin >= trainMax;
 }
 

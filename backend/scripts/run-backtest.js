@@ -13,8 +13,8 @@ function parseCliArgs() {
     if (match) {
       const key = match[1];
       let value = match[2];
-      const num = parseFloat(value);
-      if (!isNaN(num) && String(num) === value) {
+      const num = Number(value);
+      if (!isNaN(num) && isFinite(num)) {
         overrides[key] = num;
       } else if (value === 'true' || value === 'false') {
         overrides[key] = value === 'true';

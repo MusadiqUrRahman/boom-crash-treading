@@ -17,7 +17,10 @@
     "live": "node index.js",
     "production": "pm2 start ecosystem.config.js",
     "production-stop": "pm2 stop boom-crash-bot",
-    "production-logs": "pm2 logs boom-crash-bot"
+    "production-logs": "pm2 logs boom-crash-bot",
+    "test": "node node_modules/jest/bin/jest.js",
+    "test:watch": "node node_modules/jest/bin/jest.js --watch",
+    "test:coverage": "node node_modules/jest/bin/jest.js --coverage"
   },
   "dependencies": {
     "@deriv/deriv-api": "^1.0.0",
@@ -26,5 +29,8 @@
     "winston": "^3.19.0",
     "winston-daily-rotate-file": "^5.0.0",
     "ws": "^8.0.0"
+  },
+  "devDependencies": {
+    "jest": "^30.4.1"
   }
 }

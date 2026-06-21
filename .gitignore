@@ -7,3 +7,20 @@ backend/data/*.db
 backend/data/optimization-results/
 stop.txt
 *.log
+*.err
+*.txt
+!.env.example
+!backend/PRODUCTION.md
+!backend/report.md
+
+# Build caches
+.next/
+tsconfig.tsbuildinfo
+
+# Debug directories
+chrome-debug/
+.playwright-mcp/
+
+# Runtime artifacts
+*.pid
+*.seed
