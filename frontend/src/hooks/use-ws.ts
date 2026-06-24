@@ -155,10 +155,11 @@ export function useWebSocket() {
               entryTick: 0,
               expiryTick: 0,
               stake: exec.stake,
-              contractType: cfg?.contractType,
+              contractType: exec.contractType || cfg?.contractType || '',
               multiplier: cfg?.multiplier,
               stopLoss: cfg?.stopLoss,
               takeProfit: cfg?.takeProfit,
+              entryEpoch: exec.entryEpoch,
             });
           }
           client.send('getTodayStats');

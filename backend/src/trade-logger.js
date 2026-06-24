@@ -132,6 +132,24 @@ class TradeLogger {
       this.logger?.info('TradeLogger', 'Running migration: add balance to daily_stats');
       this.db.exec("ALTER TABLE daily_stats ADD COLUMN balance REAL DEFAULT 0");
     }
+
+    // Reconciliation/audit columns: track Deriv's authoritative profit alongside
+    // the recorded pnl, preserve original exit reasons, and flag impossible values.
+    const reconcileCols = [
+      ['deriv_profit', 'REAL'],            // Deriv's authoritative net P/L for the contract
+      ['original_exit_reason', 'TEXT'],    // exit_reason before reconciliation overwrote it
+      ['reconcile_status', 'TEXT'],        // RECONCILED | BACKFILLED | NOT_ON_DERIV | null
+      ['flagged_pnl', 'INTEGER DEFAULT 0'], // 1 when |pnl| > stake on a multiplier (impossible)
+    ];
+    for (const [col, type] of reconcileCols) {
+      const exists = this.db.prepare(
+        "SELECT COUNT(*) AS cnt FROM pragma_table_info('trades') WHERE name = ?"
+      ).get(col).cnt;
+      if (exists === 0) {
+        this.logger?.info('TradeLogger', `Running migration: add ${col} to trades`);
+        this.db.exec(`ALTER TABLE trades ADD COLUMN ${col} ${type}`);
+      }
+    }
   }
 
   _prepareStatements() {
@@ -141,13 +159,15 @@ class TradeLogger {
         entry_price, exit_price, entry_epoch, exit_epoch, duration_ticks,
         score, score_rsi, score_bb, score_ema, score_roc, score_momentum,
         win, pnl, balance_after, dry_run,
-        contract_type, multiplier, stop_loss, take_profit, exit_reason
+        contract_type, multiplier, stop_loss, take_profit, exit_reason,
+        deriv_profit, reconcile_status, flagged_pnl
       ) VALUES (
         @contractId, @localId, @symbol, @direction, @stake, @payoutRate,
         @entryPrice, @exitPrice, @entryEpoch, @exitEpoch, @durationTicks,
         @score, @scoreRsi, @scoreBb, @scoreEma, @scoreRoc, @scoreMomentum,
         @win, @pnl, @balanceAfter, @dryRun,
-        @contractType, @multiplier, @stopLoss, @takeProfit, @exitReason
+        @contractType, @multiplier, @stopLoss, @takeProfit, @exitReason,
+        @derivProfit, @reconcileStatus, @flaggedPnl
       )
     `);
 
@@ -173,6 +193,23 @@ class TradeLogger {
 
   logTrade(record) {
     if (!this.db) this.init();
+
+    // Sanity guard: on a multiplier contract you cannot lose more than your stake.
+    // |pnl| > stake is mathematically impossible and indicates a fabricated value.
+    let flaggedPnl = 0;
+    if (record.multiplier && record.pnl != null && record.stake != null) {
+      const EPS = 0.01;
+      if (Math.abs(record.pnl) > record.stake + EPS) {
+        flaggedPnl = 1;
+        if (this.logger) {
+          this.logger.error('TradeLogger',
+            `IMPOSSIBLE P/L: pnl=${record.pnl} exceeds stake=${record.stake} ` +
+            `(multiplier=${record.multiplier}, contract=${record.contractId}, exit=${record.exitReason}). ` +
+            `Recording as flagged for reconciliation.`);
+        }
+      }
+    }
+
     const info = this.insertStmt.run({
       contractId: record.contractId || null,
       localId: record.localId || null,
@@ -200,6 +237,9 @@ class TradeLogger {
       stopLoss: record.stopLoss ?? null,
       takeProfit: record.takeProfit ?? null,
       exitReason: record.exitReason || null,
+      derivProfit: record.derivProfit ?? null,
+      reconcileStatus: record.reconcileStatus ?? null,
+      flaggedPnl: flaggedPnl,
     });
     return info.lastInsertRowid;
   }

@@ -45,6 +45,10 @@ class WsClient {
       try {
         const msg = JSON.parse(event.data) as WsMessage;
         this.lastMessageTime = Date.now();
+        // Resolve pending request/response promises
+        if (msg.type === 'response' && msg.requestId) {
+          this.resolveRequest(msg.requestId, msg.data);
+        }
         this.handlers.forEach((h) => h(msg));
       } catch (err) {
         if (typeof console !== 'undefined') {
@@ -95,6 +99,36 @@ class WsClient {
       }
     }
     return requestId;
+  }
+
+  private _pendingRequests = new Map<string, { resolve: (data: unknown) => void; reject: (err: Error) => void; timer: ReturnType<typeof setTimeout> }>();
+
+  request(action: string, params?: Record<string, unknown>, timeoutMs = 10000): Promise<unknown> {
+    return new Promise((resolve, reject) => {
+      const requestId = `req-${++this.requestIdCounter}`;
+      const timer = setTimeout(() => {
+        this._pendingRequests.delete(requestId);
+        reject(new Error(`Request "${action}" timed out after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this._pendingRequests.set(requestId, { resolve, reject, timer });
+      const msg: WsRequest = { type: 'request', requestId, action, params };
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify(msg));
+      } else {
+        if (this.pendingMessages.length < 100) {
+          this.pendingMessages.push({ requestId, action, params });
+        }
+      }
+    });
+  }
+
+  resolveRequest(requestId: string, data: unknown) {
+    const pending = this._pendingRequests.get(requestId);
+    if (pending) {
+      clearTimeout(pending.timer);
+      this._pendingRequests.delete(requestId);
+      pending.resolve(data);
+    }
   }
 
   subscribe(handler: MessageHandler): () => void {

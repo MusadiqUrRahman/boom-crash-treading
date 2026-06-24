@@ -50,8 +50,8 @@ class DecisionEngine {
     }
 
     const strongComponents = ['rsi', 'bb', 'momentum'].filter(k => (components[k] || 0) >= 2).length;
-    if (strongComponents < 2) {
-      this.logger.info('DecisionEngine', `Weak signal: only ${strongComponents} strong component(s) (need ≥2) — skipping`);
+    if (strongComponents < 1) {
+      this.logger.info('DecisionEngine', `Weak signal: only ${strongComponents} strong component(s) (need ≥1) — skipping`);
       return { action: 'SKIP', reason: 'weak_signal' };
     }
 

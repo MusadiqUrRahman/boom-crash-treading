@@ -128,6 +128,15 @@ function computeScore(indicators, config) {
     }
   }
 
+  // ---- Symbol Bias Component ----
+  // BOOM1000 tends to spike UP → favor PUT; CRASH1000 tends to crash DOWN → favor CALL
+  const symbol = (config.symbol || '').toUpperCase();
+  if (symbol.startsWith('BOOM')) {
+    components.symbolBias = direction === 'PUT' ? 1 : -1;
+  } else if (symbol.startsWith('CRASH')) {
+    components.symbolBias = direction === 'CALL' ? 1 : -1;
+  }
+
   let total = 0;
   for (const key of Object.keys(components)) {
     total += components[key];

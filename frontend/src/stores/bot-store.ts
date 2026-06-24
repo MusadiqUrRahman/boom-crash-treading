@@ -194,14 +194,18 @@ export const useBotStore = create<BotStore>((set, get) => ({
   sellContract: async (contractId) => {
     try {
       const client = getWsClient();
-      return new Promise((resolve) => {
-        client.send('sellContract', { contractId });
-        // Resolve after a short delay since WS doesn't return promises
-        // The tradeResolved event will update the store
-        setTimeout(() => resolve({ success: true }), 100);
-      });
+      const resp = (await client.request('sellContract', { contractId })) as Record<string, unknown>;
+      if (resp?.error) return { success: false, error: String(resp.error) };
+      const inner = (resp?.data as Record<string, unknown>) || {};
+      const success = inner?.success !== false;
+      const message = inner?.message ? String(inner.message) : undefined;
+      return {
+        success,
+        error: inner?.error ? String(inner.error) : success ? undefined : message || 'Sell failed',
+        message,
+      };
     } catch (err) {
-      return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+      return { success: false, error: err instanceof Error ? err.message : 'Request failed' };
     }
   },
 }));

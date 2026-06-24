@@ -65,9 +65,11 @@ class Bot extends EventEmitter {
     this._contractIdToLocalId = new Map();
     this._executingTrade = false;
     this._lastEntryAttemptTick = -1;
+    this._lastEntryTickIndex = -1;
     this._entryCooldownTicks = parseInt(config.entryCooldownTicks || '10', 10);
     this._maxPositionTicks = parseInt(config.maxPositionTicks || '900', 10);
     this._autoSellTriggered = false;
+    this._minTicksBetweenEntries = parseInt(config.minTicksBetweenEntries || '15', 10);
     this._setupListeners();
   }
 
@@ -241,6 +243,7 @@ class Bot extends EventEmitter {
 
     this.tickStream.on('tick', (tick) => this._onTick(tick));
     this.tickStream.on('bufferReady', () => {
+      if (this.state === BOT_STATE.ENTERING) return;
       this.logger.info('Bot', 'Buffer ready, starting scoring');
       this._setState(BOT_STATE.SCORING);
     });
@@ -257,8 +260,15 @@ class Bot extends EventEmitter {
       return;
     }
 
-    // State machine watchdog: if stuck in same non-idle state >60s, restart
-    if (this._lastStateChange && this.state !== BOT_STATE.SKIP && this.state !== BOT_STATE.COOLDOWN) {
+    // State machine watchdog: if stuck in a transient working state >60s, restart.
+    // Exclude idle states (SKIP/COOLDOWN), live positions (IN_POSITION — a contract
+    // can legitimately run for minutes and is protected by SL/TP + the disconnect
+    // watchdog), and connection states (reconnect/backoff can exceed 60s legitimately).
+    const watchdogExempt = new Set([
+      BOT_STATE.SKIP, BOT_STATE.COOLDOWN, BOT_STATE.IN_POSITION,
+      BOT_STATE.DISCONNECTED, BOT_STATE.CONNECTING, BOT_STATE.STOPPING, BOT_STATE.STOPPED,
+    ]);
+    if (this._lastStateChange && !watchdogExempt.has(this.state)) {
       const stuckMs = Date.now() - this._lastStateChange;
       if (stuckMs > 60000) {
         this.logger.error('Bot', `State watchdog: stuck in ${this.state} for ${Math.floor(stuckMs / 1000)}s — force restarting`);
@@ -292,21 +302,8 @@ class Bot extends EventEmitter {
 
     if (this.contractMonitor.hasActiveContracts()) {
       this._setState(BOT_STATE.IN_POSITION);
-      const ticksInPosition = this.tickIndex - this._lastEntryTickIndex;
-      if (this._maxPositionTicks > 0 && ticksInPosition > this._maxPositionTicks) {
-        if (!this._autoSellTriggered) {
-          this._autoSellTriggered = true;
-          this.logger.warn('Bot', `Position auto-sell: ${ticksInPosition} ticks exceeded ${this._maxPositionTicks} max — selling`);
-          for (const [localId, info] of this.contractMonitor.activeContracts) {
-            const contractId = info.contractId;
-            if (contractId && !this.tradeExecutor._contractStreams.get(contractId)?.resolved) {
-              this.tradeExecutor.sellContract(contractId).catch(err => {
-                this.logger.error('Bot', `Auto-sell failed for ${contractId}: ${err.message}`);
-              });
-            }
-          }
-        }
-      }
+      // Auto-sell removed — let contracts run to natural expiry or SL/TP
+      // The 112-tick forced sell was causing tiny wins ($0.01) and bad exits
       return;
     }
 
@@ -380,6 +377,27 @@ class Bot extends EventEmitter {
       this.logger.info('DecisionEngine', `CALL components: ${JSON.stringify(callResult.components)}`);
     }
 
+    // DIRECTION FILTER: Only trade with EMA trend
+    // If price > EMA Long → uptrend → only allow CALL
+    // If price < EMA Long → downtrend → only allow PUT
+    const emaLong = indicatorValues.emaLong;
+    const currentPrice = tick.quote;
+    if (emaLong != null && currentPrice != null) {
+      const trendUp = currentPrice > emaLong;
+      if (trendUp && bestResult.direction === 'PUT') {
+        this.logger.info('Bot', `Direction filter: price ${currentPrice} > EMA Long ${emaLong.toFixed(2)} → uptrend → blocking PUT`);
+        this.config.direction = savedDirection;
+        this._setState(BOT_STATE.SKIP);
+        return;
+      }
+      if (!trendUp && bestResult.direction === 'CALL') {
+        this.logger.info('Bot', `Direction filter: price ${currentPrice} < EMA Long ${emaLong.toFixed(2)} → downtrend → blocking CALL`);
+        this.config.direction = savedDirection;
+        this._setState(BOT_STATE.SKIP);
+        return;
+      }
+    }
+
     let result;
     try {
       const correctedIndicators = bestResult.direction === 'PUT' ? putIndicators : callIndicators;
@@ -421,10 +439,15 @@ class Bot extends EventEmitter {
       this.logger.info('Bot', `Already entered on tick ${this.tickIndex}, skipping duplicate`);
       return;
     }
-    this._lastEntryTickIndex = this.tickIndex;
 
     if (this._lastEntryAttemptTick > 0 && this.tickIndex - this._lastEntryAttemptTick < this._entryCooldownTicks) {
       this.logger.info('Bot', `Entry cooldown (${this.tickIndex - this._lastEntryAttemptTick}/${this._entryCooldownTicks}) — skipping`);
+      return;
+    }
+
+    // Minimum tick gap between entries — prevents duplicate trades
+    if (this._lastEntryTickIndex > 0 && this.tickIndex - this._lastEntryTickIndex < this._minTicksBetweenEntries) {
+      this.logger.info('Bot', `Min tick gap (${this.tickIndex - this._lastEntryTickIndex}/${this._minTicksBetweenEntries}) — skipping duplicate`);
       return;
     }
 
@@ -443,6 +466,7 @@ class Bot extends EventEmitter {
     this._executingTrade = true;
     this._autoSellTriggered = false;
     this._lastEntryAttemptTick = this.tickIndex;
+    this._lastEntryTickIndex = this.tickIndex;
     this._currentTrade = { signal, entryTickIndex: this.tickIndex };
 
     let stake = this.stakeManager.getStake(this.riskManager.currentBalance);
@@ -535,15 +559,9 @@ class Bot extends EventEmitter {
     }
 
     if (this.state !== BOT_STATE.ENTERING) {
-      this.logger.warn('Bot', `Stale trade result ignored — ENTERING timeout already expired (state=${this.state})`);
+      this.logger.warn('Bot', `Stale trade result (state=${this.state}) — proceeding with contract ${result.contractId}`);
       this._tradeInProgress = false;
       this._executingTrade = false;
-      if (result.contractId) {
-        this.tradeExecutor.sellContract(result.contractId).catch(() => {
-          this.logger.warn('Bot', `Stale sell cleanup failed for ${result.contractId}`);
-        });
-      }
-      return;
     }
 
     const signal = this._currentTrade ? this._currentTrade.signal : null;
@@ -597,6 +615,44 @@ class Bot extends EventEmitter {
 
   _onContractResolved(result) {
     const balanceBefore = this.riskManager.currentBalance;
+
+    // UNRESOLVED: Deriv outcome unknown. Record the trade WITHOUT a fabricated P/L
+    // so the reconciliation script can settle it from Deriv's profit_table. Do not
+    // feed null into risk/stake accounting.
+    const isUnresolved = result.pnl == null || result.win == null;
+    if (isUnresolved) {
+      this.logger.error('Bot', `Trade ${result.localId || result.contractId} UNRESOLVED — logging with null P/L for reconciliation (exit=${result.exitReason})`);
+      const ctU = result.contractType || this._toContractType(result.direction) || 'CALL';
+      this.tradeLogger.logTrade({
+        contractId: result.contractId,
+        localId: result.localId,
+        symbol: this.config.symbol,
+        direction: result.direction,
+        stake: result.stake,
+        payoutRate: this.config.payoutRate,
+        entryPrice: result.entryPrice,
+        exitPrice: result.exitPrice,
+        entryEpoch: result.entryEpoch || Math.floor(Date.now() / 1000),
+        exitEpoch: result.exitEpoch || Math.floor(Date.now() / 1000),
+        durationTicks: result.durationTicks,
+        score: result.score,
+        scoreComponents: result.scoreComponents,
+        win: false,
+        pnl: null,
+        balanceAfter: this.riskManager.currentBalance,
+        dryRun: this.config.dryRun,
+        contractType: ctU,
+        exitReason: result.exitReason || 'UNRESOLVED',
+        multiplier: this.config.multiplier || null,
+        stopLoss: this.config.stopLoss || null,
+        takeProfit: this.config.takeProfit || null,
+        derivProfit: null,
+        reconcileStatus: 'PENDING',
+      });
+      this._setState(BOT_STATE.COOLDOWN);
+      return;
+    }
+
     this.riskManager.recordTrade(result);
     this.stakeManager.recordResult(result.win);
     this.sessionTracker.recordTrade(result, balanceBefore);
@@ -626,6 +682,7 @@ class Bot extends EventEmitter {
       multiplier: this.config.multiplier || null,
       stopLoss: this.config.stopLoss || null,
       takeProfit: this.config.takeProfit || null,
+      derivProfit: result.derivProfit ?? null,
     };
 
     const tradeId = this.tradeLogger.logTrade(record);
@@ -687,10 +744,16 @@ class Bot extends EventEmitter {
       this.contractMonitor.resolveContract(localId, {
         win: result.win,
         pnl: result.pnl,
+        derivProfit: result.derivProfit,
         exitPrice: result.exitPrice,
         exitReason: result.exitReason,
       });
       this._contractIdToLocalId.delete(contractId);
+    } else {
+      // No local mapping (e.g. contract opened in a prior session). The
+      // reconciliation script settles orphaned contracts from Deriv's profit_table,
+      // so we log and leave it rather than fabricating a record here.
+      this.logger.warn('Bot', `Contract ${contractId} resolved with no local mapping — leaving for reconciliation`);
     }
   }
 
@@ -745,6 +808,37 @@ class Bot extends EventEmitter {
         scoreThreshold: this.config.scoreThreshold,
       },
     };
+  }
+
+  updateConfig(partial) {
+    for (const [key, value] of Object.entries(partial)) {
+      if (this.config[key] !== undefined) {
+        const old = this.config[key];
+        this.config[key] = value;
+        this.logger.info('Bot', `Config ${key}: ${old} -> ${value}`);
+      }
+    }
+    if (this.stakeManager) {
+      this.stakeManager.config = this.config;
+    }
+    if (this.riskManager) {
+      this.riskManager.config = this.config;
+    }
+    if (this.decisionEngine) {
+      this.decisionEngine.config = this.config;
+    }
+    if (this.indicatorEngine) {
+      this.indicatorEngine.config = this.config;
+    }
+    if (this.tradeExecutor) {
+      // CRITICAL: tradeExecutor reads stopLoss/takeProfit/stake/multiplier from
+      // this.config. Without this line, SL/TP/stake changes from the UI never
+      // reached the executor and active trades kept the old protection values.
+      this.tradeExecutor.config = this.config;
+    }
+    if (this.contractMonitor) {
+      this.contractMonitor.config = this.config;
+    }
   }
 }
 

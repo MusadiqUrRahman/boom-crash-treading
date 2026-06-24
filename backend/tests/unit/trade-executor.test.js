@@ -377,11 +377,11 @@ describe('TradeExecutor', () => {
 
   describe('reconnectContracts', () => {
     it('reconnects pending contracts after reconnect', async () => {
-      executor._contractStreams.set('contract1', { entryPrice: 100, contractType: 'MULTDOWN', subscription: null });
+      executor._contractStreams.set('contract1', { entryPrice: 100, contractType: 'MULTDOWN', subscription: null, stake: 2, multiplier: 500 });
       const subscribeMock = jest.spyOn(executor, '_subscribeContract').mockImplementation(() => {});
       jest.spyOn(executor, '_setStopLossTakeProfit').mockResolvedValue({});
       await executor.reconnectContracts();
-      expect(subscribeMock).toHaveBeenCalledWith('contract1', 100, 'MULTDOWN');
+      expect(subscribeMock).toHaveBeenCalledWith('contract1', 100, 'MULTDOWN', 2, 500);
       subscribeMock.mockRestore();
     });
   });

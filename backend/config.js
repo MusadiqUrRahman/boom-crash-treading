@@ -63,13 +63,13 @@ function loadConfig() {
     debugScores: process.env.DEBUG_SCORES === 'true',
 
     payoutRate: parseFloat(process.env.PAYOUT_RATE || bestParams?.payoutRate || '0.85'),
-    stake: parseFloat(process.env.STAKE || bestParams?.stake || '1.00'),
+    stake: parseFloat(process.env.STAKE || bestParams?.stake || '2.00'),
     allowEquals: process.env.ALLOW_EQUALS === 'true' || (bestParams?.allowEquals === true),
     durationTicks: parseInt(process.env.DURATION_TICKS || bestParams?.durationTicks || '10', 10),
     cooldownTicks: parseInt(process.env.COOLDOWN_TICKS || bestParams?.cooldownTicks || '5', 10),
     lossCooldownMultiplier: parseInt(process.env.LOSS_COOLDOWN_MULT || '4', 10),
 
-    scoreThreshold: parseInt(process.env.SCORE_THRESHOLD || bestParams?.scoreThreshold || '3', 10),
+    scoreThreshold: parseInt(process.env.SCORE_THRESHOLD || bestParams?.scoreThreshold || '7', 10),
 
     rsiPeriod: parseInt(process.env.RSI_PERIOD || '14', 10),
     rsiOversold: parseInt(process.env.RSI_OVERSOLD || bestParams?.rsiOversold || '35', 10),
@@ -117,16 +117,16 @@ function loadConfig() {
     liveTradesDbPath: process.env.LIVE_TRADES_DB_PATH || './data/live_trades.db',
     storeTicks: process.env.STORE_TICKS !== 'false',
 
-    multiplier: parseInt(process.env.MULTIPLIER || '100', 10),
-    stopLoss: parseFloat(process.env.STOP_LOSS || '0.10'),
-    takeProfit: parseFloat(process.env.TAKE_PROFIT || '0.75'),
+    multiplier: parseInt(process.env.MULTIPLIER || '500', 10),
+    stopLoss: parseFloat(process.env.STOP_LOSS || '0.25'),
+    takeProfit: parseFloat(process.env.TAKE_PROFIT || '0.50'),
     maxMlDurationTicks: parseInt(process.env.MAX_ML_DURATION_TICKS || '10', 10),
     maxTimeoutExtensions: parseInt(process.env.MAX_TIMEOUT_EXTENSIONS || '1000', 10),
     minProfitToSell: parseFloat(process.env.MIN_PROFIT_TO_SELL || '0.50'),
     maxAcceptableLoss: parseFloat(process.env.MAX_ACCEPTABLE_LOSS || '0.50'),
     volatilityThreshold: parseFloat(process.env.VOLATILITY_THRESHOLD || '300'),
     volatilityLookbackTicks: parseInt(process.env.VOLATILITY_LOOKBACK_TICKS || '10', 10),
-    maxPositionTicks: parseInt(process.env.MAX_POSITION_TICKS || '900', 10),
+    maxPositionTicks: parseInt(process.env.MAX_POSITION_TICKS || '110', 10),
     entryCooldownTicks: parseInt(process.env.ENTRY_COOLDOWN_TICKS || '10', 10),
   };
 

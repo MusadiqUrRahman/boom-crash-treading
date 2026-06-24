@@ -80,10 +80,10 @@ describe('ContractMonitor', () => {
       expect(cm.activeContracts.get(id).currentTickIndex).toBe(1);
     });
 
-    it('resolves fixed-duration contract on expiry tick', () => {
+    it('resolves fixed-duration binary contract on expiry tick', () => {
       const callback = jest.fn();
       cm.on('contractResolved', callback);
-      cm.startContract('c1', 100, 0, 5, 'CALL', 2, 2.5, 7, {}, 'MULTUP', null, null, null, null);
+      cm.startContract('c1', 100, 0, 5, 'CALL', 2, 2.5, 7, {}, 'CALL', null, null, null, null);
       cm.onTick(makeTick(105), 5);
       expect(callback).toHaveBeenCalledTimes(1);
       expect(callback.mock.calls[0][0].win).toBe(true);
@@ -106,29 +106,44 @@ describe('ContractMonitor', () => {
       expect(callback).not.toHaveBeenCalled();
     });
 
-    it('resolves PUT contract correctly (price down = win)', () => {
+    // MULTIPLIER contracts must NEVER be resolved with binary win/loss P/L by the
+    // tick monitor — that fabricated phantom losses (see PNL_MISMATCH_REPORT.md).
+    // They resolve as UNRESOLVED (null pnl) so Deriv's profit settles them.
+    it('emits UNRESOLVED for a multiplier contract hitting tick expiry (no fabricated P/L)', () => {
       const callback = jest.fn();
       cm.on('contractResolved', callback);
       cm.startContract('c1', 100, 0, 5, 'PUT', 2, 4, 7, {}, 'MULTDOWN', null, null, null, null);
       cm.onTick(makeTick(95), 5);
       expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback.mock.calls[0][0].pnl).toBeNull();
+      expect(callback.mock.calls[0][0].win).toBeNull();
+      expect(callback.mock.calls[0][0].exitReason).toBe('UNRESOLVED');
+    });
+
+    // Genuine fixed-duration BINARY contracts (non-MULT type) keep binary resolution.
+    it('resolves a binary PUT contract correctly (price down = win)', () => {
+      const callback = jest.fn();
+      cm.on('contractResolved', callback);
+      cm.startContract('c1', 100, 0, 5, 'PUT', 2, 4, 7, {}, 'PUT', null, null, null, null);
+      cm.onTick(makeTick(95), 5);
+      expect(callback).toHaveBeenCalledTimes(1);
       expect(callback.mock.calls[0][0].win).toBe(true);
     });
 
-    it('resolves CALL contract as loss when exit > entry', () => {
+    it('resolves a binary CALL contract as loss when exit < entry', () => {
       const callback = jest.fn();
       cm.on('contractResolved', callback);
-      cm.startContract('c1', 100, 0, 5, 'CALL', 2, 4, 7, {}, 'MULTUP', null, null, null, null);
+      cm.startContract('c1', 100, 0, 5, 'CALL', 2, 4, 7, {}, 'CALL', null, null, null, null);
       cm.onTick(makeTick(95), 5);
       expect(callback).toHaveBeenCalledTimes(1);
       expect(callback.mock.calls[0][0].win).toBe(false);
     });
 
-    it('uses allowEquals when set', () => {
+    it('uses allowEquals when set (binary contract)', () => {
       const cmEq = new ContractMonitor(logger, true);
       const callback = jest.fn();
       cmEq.on('contractResolved', callback);
-      cmEq.startContract('c1', 100, 0, 5, 'CALL', 2, 4, 7, {}, 'MULTUP', null, null, null, null);
+      cmEq.startContract('c1', 100, 0, 5, 'CALL', 2, 4, 7, {}, 'CALL', null, null, null, null);
       cmEq.onTick(makeTick(100), 5);
       expect(callback.mock.calls[0][0].win).toBe(true);
     });
@@ -165,10 +180,20 @@ describe('ContractMonitor', () => {
   });
 
   describe('forceResolve', () => {
-    it('resolves contract with current tick price', () => {
+    it('force-resolves a multiplier as UNRESOLVED (no fabricated P/L)', () => {
       const callback = jest.fn();
       cm.on('contractResolved', callback);
       const id = cm.startContract('c1', 100, 0, 0, 'CALL', 2, 4, 7, {}, 'MULTUP', null, null, null, null);
+      cm.forceResolve(id, makeTick(110));
+      expect(callback).toHaveBeenCalledTimes(1);
+      expect(callback.mock.calls[0][0].pnl).toBeNull();
+      expect(callback.mock.calls[0][0].exitReason).toBe('UNRESOLVED');
+    });
+
+    it('force-resolves a binary contract with current tick price', () => {
+      const callback = jest.fn();
+      cm.on('contractResolved', callback);
+      const id = cm.startContract('c1', 100, 0, 5, 'CALL', 2, 4, 7, {}, 'CALL', null, null, null, null);
       cm.forceResolve(id, makeTick(110));
       expect(callback).toHaveBeenCalledTimes(1);
       expect(callback.mock.calls[0][0].win).toBe(true);

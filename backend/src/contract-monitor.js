@@ -67,7 +67,8 @@ class ContractMonitor {
     if (!contract || contract.resolved) return;
 
     contract.resolved = true;
-    this.logger.info('ContractMonitor', `Contract ${localId} RESOLVED via API: ${result.win ? 'WIN' : 'LOSS'} PnL=${result.pnl >= 0 ? '+' : ''}${result.pnl.toFixed(4)}`);
+    const pnlStr = (result.pnl == null) ? 'UNRESOLVED' : `${result.pnl >= 0 ? '+' : ''}${result.pnl.toFixed(4)}`;
+    this.logger.info('ContractMonitor', `Contract ${localId} RESOLVED via API: ${result.win == null ? 'UNRESOLVED' : (result.win ? 'WIN' : 'LOSS')} PnL=${pnlStr}`);
 
     const fullResult = {
       localId,
@@ -75,6 +76,7 @@ class ContractMonitor {
       direction: contract.direction,
       win: result.win,
       pnl: result.pnl,
+      derivProfit: result.derivProfit ?? null,
       entryPrice: contract.entryPrice,
       exitPrice: result.exitPrice || contract.entryPrice,
       stake: contract.stake,
@@ -96,8 +98,42 @@ class ContractMonitor {
   _resolveContract(localId, contract, currentTick) {
     contract.resolved = true;
     const exitPrice = currentTick.quote;
-    let win;
 
+    // Multiplier contracts do NOT have a binary win?+payout:-stake P/L — that
+    // formula fabricated phantom losses (see PNL_MISMATCH_REPORT.md). For
+    // multipliers the authoritative outcome comes only from TradeExecutor reading
+    // Deriv's `profit`; here we mark UNRESOLVED (null pnl) so nothing is fabricated.
+    // Genuine fixed-duration BINARY contracts (CALL/PUT) keep the binary path.
+    const isMultiplier = contract.contractType && contract.contractType.startsWith('MULT');
+
+    if (isMultiplier) {
+      this.logger.error('ContractMonitor', `Contract ${localId} hit tick-monitor resolution but is a multiplier — emitting UNRESOLVED (no fabricated P/L). Deriv settles this.`);
+      this.activeContracts.delete(localId);
+      this._emit('contractResolved', {
+        localId,
+        contractId: contract.contractId,
+        direction: contract.direction,
+        win: null,
+        pnl: null,
+        derivProfit: null,
+        entryPrice: contract.entryPrice,
+        exitPrice,
+        stake: contract.stake,
+        payout: 0,
+        score: contract.score,
+        scoreComponents: contract.scoreComponents,
+        entryTickIndex: contract.entryTickIndex,
+        durationTicks: contract.currentTickIndex - contract.entryTickIndex,
+        contractType: contract.contractType,
+        exitReason: 'UNRESOLVED',
+        entryEpoch: contract.entryEpoch,
+        exitEpoch: Math.floor(Date.now() / 1000),
+      });
+      return;
+    }
+
+    // Genuine fixed-duration binary contract (legacy/backtest path only).
+    let win;
     if (contract.direction === 'CALL') {
       win = this.allowEquals ? exitPrice >= contract.entryPrice : exitPrice > contract.entryPrice;
     } else {

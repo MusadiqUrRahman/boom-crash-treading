@@ -117,6 +117,7 @@ export interface ActiveContract {
   multiplier?: number;
   stopLoss?: number;
   takeProfit?: number;
+  entryEpoch?: number;
 }
 
 export interface TradeExecutedEvent {
@@ -128,6 +129,8 @@ export interface TradeExecutedEvent {
   entryPrice: number | null;
   dryRun: boolean;
   transactionId?: string;
+  contractType?: string;
+  entryEpoch?: number;
 }
 
 export interface TradeResolvedEvent {
@@ -321,6 +324,12 @@ export interface WsMessage {
   type: WsMessageType;
   data: unknown;
   requestId?: string;
+}
+
+export interface WsResponseMessage extends WsMessage {
+  type: 'response';
+  requestId: string;
+  data: { data?: unknown; error?: string };
 }
 
 export interface WsRequest {

@@ -1,7 +1,7 @@
 {
   "date": "2026-06-21",
   "symbol": "BOOM1000",
-  "direction": "CALL",
+  "direction": "PUT",
   "parameters": {
     "durationTicks": 5,
     "scoreThreshold": 7,
@@ -16,36 +16,48 @@
   },
   "account": {
     "startBalance": 9982.76,
-    "endBalance": 9983.43,
-    "dailyReturn": 0.00006711570747970229,
-    "totalPnL": 0.6700000000000003,
-    "maxDrawdown": 1.250000000001819
+    "endBalance": 9987.26,
+    "dailyReturn": 0.0004507771397889962,
+    "totalPnL": -2.2199999999999998,
+    "maxDrawdown": 8.06000000000131
   },
   "trades": {
-    "total": 14,
-    "wins": 6,
-    "losses": 8,
-    "winRate": 0.42857142857142855,
-    "avgWin": 0.22833333333333336,
-    "avgLoss": 0.08749999999999998,
-    "profitFactor": 1.9571428571428577,
-    "maxConsecutiveWins": 3,
-    "maxConsecutiveLosses": 3,
+    "total": 70,
+    "wins": 22,
+    "losses": 48,
+    "winRate": 0.3142857142857143,
+    "avgWin": 0.21045454545454548,
+    "avgLoss": 0.14270833333333324,
+    "profitFactor": 0.6759124087591246,
+    "maxConsecutiveWins": 4,
+    "maxConsecutiveLosses": 8,
     "averageStake": 1,
-    "totalStake": 14
+    "totalStake": 70
   },
   "timeAnalysis": {
-    "bestHour": 4,
-    "worstHour": 2,
-    "bestHourWR": 0.6666666666666666,
-    "worstHourWR": 0.3,
+    "bestHour": 5,
+    "worstHour": 10,
+    "bestHourWR": 0.5,
+    "worstHourWR": 0,
     "tradesByHour": {
       "2": 10,
       "3": 1,
-      "4": 3,
+      "4": 7,
+      "5": 4,
+      "6": 6,
+      "7": 13,
+      "8": 13,
+      "9": 13,
+      "10": 3,
       "2_wins": 3,
       "3_wins": 1,
-      "4_wins": 2
+      "4_wins": 3,
+      "5_wins": 2,
+      "6_wins": 3,
+      "7_wins": 3,
+      "8_wins": 4,
+      "9_wins": 3,
+      "10_wins": 0
     }
   }
 }

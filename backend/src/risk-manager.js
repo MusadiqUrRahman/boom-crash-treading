@@ -9,6 +9,11 @@ class RiskManager {
     this.dailyPnL = 0;
     this.startingBalance = config.startingBalance || 100;
     this.currentBalance = this.startingBalance;
+    // True once the live Deriv balance feed has provided a real balance. When
+    // active, the live feed OWNS currentBalance and recordTrade() must not also
+    // add pnl (that would double-count). Without a live feed (tests / virtual /
+    // pre-auth), recordTrade accumulates pnl locally as before.
+    this._liveBalanceActive = false;
     this.today = new Date().toDateString();
     this.maxDailyDrawdown = config.maxDailyDrawdown || 0.10;
     this._circuitBreakerTrippedAt = null;
@@ -81,20 +86,34 @@ class RiskManager {
   recordTrade(result) {
     this._checkNewDay();
 
+    // Guard: never accumulate a null/unknown P/L (UNRESOLVED trades are handled
+    // upstream and must not reach here).
+    if (result.pnl == null || !Number.isFinite(result.pnl)) {
+      this.logger.warn('RiskManager', `recordTrade called with non-finite pnl (${result.pnl}) — ignoring for accounting`);
+      return;
+    }
+
+    // Balance ownership:
+    //  - LIVE mode (virtualBalance == 0): the Deriv balance subscription is the
+    //    source of truth and overwrites currentBalance via updateLiveBalance().
+    //    Adding pnl here too would DOUBLE-COUNT, so we don't touch currentBalance.
+    //  - VIRTUAL mode: there is no live feed, so we accumulate pnl locally.
+    const liveBalanceOwnsBalance = this._liveBalanceActive && !(this.config.virtualBalance > 0);
+
     this.dailyTrades++;
     if (result.win) {
       this.dailyWins++;
       this.consecutiveLosses = 0;
-      this.currentBalance += result.pnl;
-      this.dailyPnL += result.pnl;
     } else {
       this.consecutiveLosses++;
       this.dailyLoss += Math.abs(result.pnl);
+    }
+    this.dailyPnL += result.pnl;
+    if (!liveBalanceOwnsBalance) {
       this.currentBalance += result.pnl;
-      this.dailyPnL += result.pnl;
     }
 
-    this.logger.info('RiskManager', `PnL: ${result.pnl >= 0 ? '+' : ''}${result.pnl.toFixed(4)} Balance: ${this.currentBalance.toFixed(2)} Daily: ${this.dailyTrades}t ${this.dailyPnL >= 0 ? '+' : ''}${this.dailyPnL.toFixed(2)}`);
+    this.logger.info('RiskManager', `PnL: ${result.pnl >= 0 ? '+' : ''}${result.pnl.toFixed(4)} Balance: ${this.currentBalance.toFixed(2)}${liveBalanceOwnsBalance ? ' (live)' : ''} Daily: ${this.dailyTrades}t ${this.dailyPnL >= 0 ? '+' : ''}${this.dailyPnL.toFixed(2)}`);
   }
 
   recordTick(price) {
@@ -141,12 +160,14 @@ class RiskManager {
     this.logger.info('RiskManager', `Setting real balance from Deriv API: $${balance.toFixed(2)} (was $${this.startingBalance.toFixed(2)})`);
     this.startingBalance = balance;
     this.currentBalance = balance;
+    this._liveBalanceActive = true;
   }
 
   updateLiveBalance(balance) {
     if (this.config.virtualBalance > 0) return;
     if (typeof balance !== 'number' || balance <= 0) return;
     this.currentBalance = balance;
+    this._liveBalanceActive = true;
   }
 
   resetDaily() {

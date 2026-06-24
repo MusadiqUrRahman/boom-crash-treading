@@ -1,8 +1,84 @@
 const WebSocket = require('ws');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const Database = require('better-sqlite3');
 const { buildReport } = require('./scripts/daily-report');
+
+const ENV_PATH = path.join(__dirname, '.env');
+
+const CONFIG_KEY_TO_ENV = {
+  symbol: 'SYMBOL',
+  direction: 'DIRECTION',
+  stake: 'STAKE',
+  stopLoss: 'STOP_LOSS',
+  takeProfit: 'TAKE_PROFIT',
+  multiplier: 'MULTIPLIER',
+  scoreThreshold: 'SCORE_THRESHOLD',
+  minTicksBeforeTrade: 'MIN_TICKS_BEFORE_TRADE',
+  cooldownTicks: 'COOLDOWN_TICKS',
+  maxConsecutiveLosses: 'MAX_CONSECUTIVE_LOSSES',
+  maxDailyLoss: 'MAX_DAILY_LOSS',
+  maxDailyTrades: 'MAX_DAILY_TRADES',
+  durationTicks: 'DURATION_TICKS',
+  payoutRate: 'PAYOUT_RATE',
+  rsiPeriod: 'RSI_PERIOD',
+  rsiOversold: 'RSI_OVERSOLD',
+  rsiOverbought: 'RSI_OVERBOUGHT',
+  bbPeriod: 'BB_PERIOD',
+  bbStdDev: 'BB_STDDEV',
+  emaShortPeriod: 'EMA_SHORT_PERIOD',
+  emaLongPeriod: 'EMA_LONG_PERIOD',
+  rocPeriod: 'ROC_PERIOD',
+  entryCooldownTicks: 'ENTRY_COOLDOWN_TICKS',
+  maxPositionTicks: 'MAX_POSITION_TICKS',
+  stakeMode: 'STAKE_MODE',
+  baseStake: 'BASE_STAKE',
+  minStake: 'MIN_STAKE',
+  maxStake: 'MAX_STAKE',
+  useMartingale: 'USE_MARTINGALE',
+  circuitBreakerCooldownMin: 'CIRCUIT_BREAKER_COOLDOWN_MIN',
+  maxCircuitBreakerTrips: 'MAX_CIRCUIT_BREAKER_TRIPS',
+  volatilityThreshold: 'VOLATILITY_THRESHOLD',
+  volatilityLookbackTicks: 'VOLATILITY_LOOKBACK_TICKS',
+  directionLookbackTicks: 'DIRECTION_LOOKBACK_TICKS',
+  directionMinAlignment: 'DIRECTION_MIN_ALIGNMENT',
+  dynamicDirection: 'DYNAMIC_DIRECTION',
+  debugScores: 'DEBUG_SCORES',
+};
+
+function writeEnvFile(updates) {
+  try {
+    let content = fs.readFileSync(ENV_PATH, 'utf-8');
+    const lines = content.split(/\r?\n/);
+    const updatedKeys = new Set();
+
+    const result = lines.map(line => {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith('#')) return line;
+      const eqIdx = trimmed.indexOf('=');
+      if (eqIdx === -1) return line;
+      const key = trimmed.slice(0, eqIdx).trim();
+      if (updates[key] !== undefined) {
+        updatedKeys.add(key);
+        return `${key}=${String(updates[key])}`;
+      }
+      return line;
+    });
+
+    for (const [key, value] of Object.entries(updates)) {
+      if (!updatedKeys.has(key)) {
+        result.push(`${key}=${String(value)}`);
+      }
+    }
+
+    fs.writeFileSync(ENV_PATH, result.join(os.EOL), 'utf-8');
+    return true;
+  } catch (err) {
+    console.error('[WSBridge] Failed to write .env:', err.message);
+    return false;
+  }
+}
 
 const liveDbPath = path.join(__dirname, 'data', 'live_trades.db');
 let _sharedDb = null;
@@ -97,7 +173,7 @@ class BotWebSocketServer {
     ws.on('error', () => this.clients.delete(ws));
   }
 
-  _handleMessage(ws, raw) {
+  async _handleMessage(ws, raw) {
     let msg;
     try {
       msg = JSON.parse(raw);
@@ -262,6 +338,34 @@ class BotWebSocketServer {
           return [];
         }
       },
+      updateConfig: async () => {
+        const partial = params && params.config;
+        if (!partial || typeof partial !== 'object') {
+          return { success: false, error: 'config object required' };
+        }
+        const envUpdates = {};
+        const configUpdates = {};
+        for (const [key, value] of Object.entries(partial)) {
+          const envKey = CONFIG_KEY_TO_ENV[key];
+          if (envKey) {
+            envUpdates[envKey] = value;
+            configUpdates[key] = value;
+          }
+        }
+        if (Object.keys(envUpdates).length === 0) {
+          return { success: false, error: 'no valid config keys provided' };
+        }
+        const written = writeEnvFile(envUpdates);
+        if (!written) {
+          return { success: false, error: 'failed to write .env' };
+        }
+        if (this.bot.updateConfig) {
+          this.bot.updateConfig(configUpdates);
+        }
+        this._broadcast('config', this._sanitizeConfig(this.bot.config));
+        this.logger.info('WSBridge', `Config updated: ${Object.keys(configUpdates).join(', ')}`);
+        return { success: true, updated: Object.keys(configUpdates) };
+      },
       sellContract: async () => {
         const contractId = params && params.contractId;
         if (!contractId) {
@@ -271,8 +375,16 @@ class BotWebSocketServer {
           return { success: false, error: 'TradeExecutor not available' };
         }
         try {
+          const contract = this.bot.tradeExecutor._contractStreams.get(contractId);
+          const wasResolved = contract ? contract.resolved : false;
           await this.bot.tradeExecutor.sellContract(contractId);
-          return { success: true, contractId };
+          const stillOpen = this.bot.tradeExecutor._contractStreams.has(contractId);
+          return {
+            success: !stillOpen,
+            contractId,
+            resolved: wasResolved,
+            message: stillOpen ? 'Sell attempted but contract may still be open' : 'Contract sold successfully',
+          };
         } catch (err) {
           return { success: false, error: err.message };
         }
@@ -307,7 +419,7 @@ class BotWebSocketServer {
     }
 
     try {
-      const data = handler();
+      const data = await handler();
       this._send(ws, 'response', { data }, requestId);
     } catch (err) {
       this._send(ws, 'response', { error: err.message }, requestId);

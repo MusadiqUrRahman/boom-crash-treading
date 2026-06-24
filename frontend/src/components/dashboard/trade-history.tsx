@@ -1,177 +1,235 @@
 'use client';
 
-import { motion, AnimatePresence } from 'framer-motion';
 import { useBotStore } from '@/stores/bot-store';
 import { formatPnL, formatDuration } from '@/lib/format';
-import { ListOrdered, TrendingUp, TrendingDown, Search } from 'lucide-react';
-import { useState, useMemo } from 'react';
+import { ArrowUpRight, ArrowDownRight, Activity, ChevronRight } from 'lucide-react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+
+// Parse local time string "YYYY-MM-DD HH:MM:SS" to epoch ms (treating as local time)
+function parseLocal(dateStr: string): number {
+  const [datePart, timePart] = dateStr.split(' ');
+  const [y, m, d] = datePart.split('-').map(Number);
+  const [h, min, s] = (timePart || '00:00:00').split(':').map(Number);
+  return new Date(y, m - 1, d, h, min, s).getTime();
+}
+
+function isToday(dateStr: string | null): boolean {
+  if (!dateStr) return false;
+  const tradeTime = parseLocal(dateStr);
+  const now = new Date();
+  return now.getFullYear() === new Date(tradeTime).getFullYear()
+    && now.getMonth() === new Date(tradeTime).getMonth()
+    && now.getDate() === new Date(tradeTime).getDate();
+}
 
 export function TradeHistory() {
   const trades = useBotStore((s) => s.trades);
   const isInitialLoad = useBotStore((s) => s.isInitialLoad);
-  const [filter, setFilter] = useState<string>('');
+  const [filter, setFilter] = useState('');
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [, forceUpdate] = useState(0);
+
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const scheduleReset = () => {
+      const now = new Date();
+      const midnight = new Date(now);
+      midnight.setHours(24, 0, 0, 0);
+      timerRef.current = setTimeout(() => { forceUpdate(n => n + 1); scheduleReset(); }, midnight.getTime() - now.getTime());
+    };
+    scheduleReset();
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
+  }, []);
+
+  const todayTrades = useMemo(() => {
+    return trades.filter(t => isToday(t.createdAt ?? null));
+  }, [trades]);
 
   const filtered = useMemo(() => {
-    if (!filter) return trades;
+    if (!filter) return todayTrades;
     const f = filter.toLowerCase();
-    return trades.filter(t =>
+    return todayTrades.filter(t =>
       t.direction.toLowerCase().includes(f) ||
-      t.symbol.toLowerCase().includes(f) ||
-      t.exitReason?.toLowerCase().includes(f) ||
-      t.pnl.toString().includes(f)
+      t.exitReason?.toLowerCase().includes(f)
     );
-  }, [trades, filter]);
+  }, [todayTrades, filter]);
 
   const recent = filtered.slice(0, 50);
-  const totalPnL = recent.reduce((s, t) => s + (t.pnl || 0), 0);
-  const wins = recent.filter((t) => t.win).length;
+  const totalPnL = todayTrades.reduce((s, t) => s + (t.pnl || 0), 0);
+  const wins = todayTrades.filter(t => t.win).length;
+  const losses = todayTrades.length - wins;
+  const winRate = todayTrades.length > 0 ? ((wins / todayTrades.length) * 100).toFixed(0) : '---';
+
+  const toggleExpand = useCallback((key: string) => {
+    setExpandedId(prev => prev === key ? null : key);
+  }, []);
 
   if (!isInitialLoad) {
     return (
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass-card rounded-2xl p-4"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <div className="p-1.5 rounded-lg bg-blue-500/10">
-            <ListOrdered size={13} className="text-blue-400" />
-          </div>
-          <span className="text-[10px] font-semibold text-[--color-text-muted] uppercase tracking-wider">Recent Trades</span>
+      <div className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-lg p-3">
+        <div className="flex items-center gap-2 mb-2">
+          <Activity size={12} className="text-blue-400" />
+          <span className="text-[10px] font-semibold text-[--color-text-muted] uppercase tracking-wider">Trades</span>
         </div>
-        <div className="flex items-center justify-center py-8">
-          <div className="flex flex-col items-center gap-2 text-xs text-[--color-text-muted]">
-            <div className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
-            <span>Loading trades...</span>
-          </div>
+        <div className="flex items-center justify-center py-6">
+          <div className="w-3 h-3 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
         </div>
-      </motion.div>
-    );
-  }
-
-  if (trades.length === 0) {
-    return (
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="glass-card rounded-2xl p-4"
-      >
-        <div className="flex items-center gap-2 mb-3">
-          <div className="p-1.5 rounded-lg bg-blue-500/10">
-            <ListOrdered size={13} className="text-blue-400" />
-          </div>
-          <span className="text-[10px] font-semibold text-[--color-text-muted] uppercase tracking-wider">Recent Trades</span>
-        </div>
-        <div className="flex flex-col items-center justify-center py-8 text-xs text-[--color-text-muted]">
-          <div className="mb-1">No trades yet</div>
-          <div className="text-[10px]">Trades appear here when executed</div>
-        </div>
-      </motion.div>
+      </div>
     );
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: 0.25 }}
-      className="glass-card rounded-2xl p-4"
-    >
-      <div className="flex items-center gap-2 mb-3">
-        <div className="p-1.5 rounded-lg bg-blue-500/10">
-          <ListOrdered size={13} className="text-blue-400" />
+    <div className="bg-[var(--color-bg-elevated)] border border-[var(--color-border)] rounded-lg">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 py-1.5 border-b border-[var(--color-border)]">
+        <div className="flex items-center gap-2">
+          <Activity size={11} className="text-blue-400" />
+          <span className="text-[10px] font-semibold text-[--color-text-muted] uppercase tracking-wider">Trades</span>
+          <span className="text-[9px] text-[--color-text-muted] font-mono">{todayTrades.length}</span>
         </div>
-        <span className="text-[10px] font-semibold text-[--color-text-muted] uppercase tracking-wider">Recent Trades</span>
-        <div className="flex items-center gap-2 ml-auto">
-          <div className="relative">
-            <Search size={10} className="absolute left-2 top-1/2 -translate-y-1/2 text-[--color-text-muted]" />
-            <input
-              type="text"
-              value={filter}
-              onChange={(e) => setFilter(e.target.value)}
-              placeholder="Filter..."
-              className="w-24 text-[10px] bg-[--color-bg-hover] border border-[--color-border] rounded-md pl-6 pr-2 py-1 text-[--color-text-primary] placeholder:text-[--color-text-muted] outline-none"
-            />
-          </div>
-          <div className="flex items-center gap-2.5 text-[10px] font-mono tabular-nums">
-            <span className="text-[--color-text-muted]">{recent.length} total</span>
-            <span className="flex items-center gap-0.5 text-emerald-400"><TrendingUp size={9} />{wins}W</span>
-            <span className="flex items-center gap-0.5 text-red-400"><TrendingDown size={9} />{recent.length - wins}L</span>
-            <span className={totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}>
-              {totalPnL >= 0 ? '+' : ''}${totalPnL.toFixed(2)}
-            </span>
-          </div>
+        <div className="flex items-center gap-2.5 text-[9px] font-mono tabular-nums">
+          {todayTrades.length > 0 && (
+            <>
+              <span className="text-emerald-400">{wins}W</span>
+              <span className="text-red-400">{losses}L</span>
+              <span className="text-[--color-text-muted]">{winRate}%</span>
+              <span className={`font-bold ${totalPnL >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>{formatPnL(totalPnL)}</span>
+            </>
+          )}
+          <input
+            type="text"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            placeholder="filter"
+            className="w-14 text-[9px] bg-[--color-bg-hover] border border-[--color-border] rounded px-1.5 py-0.5 text-[--color-text-primary] placeholder:text-[--color-text-muted] outline-none focus:border-blue-500/50"
+          />
         </div>
       </div>
-      <div className="max-h-[320px] overflow-y-auto -mx-4 px-4 scrollbar-thin">
-        <table className="w-full text-[11px]">
-          <thead>
-            <tr className="text-[--color-text-muted] border-b border-[--color-border] sticky top-0 z-10" style={{ background: 'var(--color-bg-elevated)' }}>
-              <th className="text-left py-2 pr-1.5 font-medium text-[9px] uppercase tracking-wider w-[52px]">Time</th>
-              <th className="text-left py-2 px-1.5 font-medium text-[9px] uppercase tracking-wider w-[32px]">Dir</th>
-              <th className="text-right py-2 px-1.5 font-medium text-[9px] uppercase tracking-wider w-[48px]">Entry</th>
-              <th className="text-right py-2 px-1.5 font-medium text-[9px] uppercase tracking-wider w-[48px]">Exit</th>
-              <th className="text-right py-2 px-1.5 font-medium text-[9px] uppercase tracking-wider w-[48px]">PnL</th>
-              <th className="text-center py-2 px-1.5 font-medium text-[9px] uppercase tracking-wider w-[44px]">Dur</th>
-              <th className="text-center py-2 pl-1.5 font-medium text-[9px] uppercase tracking-wider w-[60px]">Exit</th>
-            </tr>
-          </thead>
-          <tbody>
-            <AnimatePresence initial={false}>
-              {recent.map((t, idx) => (
-                <motion.tr
-                  key={t._key}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2, delay: Math.min(idx * 0.02, 0.5) }}
-                  className="border-b border-[--color-border]/10 hover:bg-blue-500/[0.02] transition-colors"
-                >
-                  <td className="py-2 pr-1.5 font-mono text-[--color-text-muted] text-[10px] whitespace-nowrap">
-                    {t.createdAt ? new Date(t.createdAt).toLocaleTimeString('en-US', { hour12: false }) : '---'}
-                  </td>
-                  <td className={`py-2 px-1.5 font-mono font-bold text-[10px] ${
-                    t.direction === 'CALL' ? 'text-emerald-400' : 'text-red-400'
-                  }`}>
-                    {t.direction === 'CALL' ? 'C' : 'P'}
-                  </td>
-                  <td className="py-2 px-1.5 font-mono text-right text-[10px] tabular-nums">{t.entryPrice?.toFixed(2) ?? '---'}</td>
-                  <td className="py-2 px-1.5 font-mono text-right text-[10px] tabular-nums">{t.exitPrice != null ? Number(t.exitPrice).toFixed(2) : '---'}</td>
-                  <td className={`py-2 px-1.5 font-mono text-right font-bold text-[10px] tabular-nums ${
-                    t.win ? 'text-emerald-400' : 'text-red-400'
-                  }`}>
-                    <motion.span
-                      key={t.pnl}
-                      initial={{ scale: 1.3, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ duration: 0.3 }}
-                    >
-                      {formatPnL(t.pnl)}
-                    </motion.span>
-                  </td>
-                  <td className="py-2 px-1.5 text-center font-mono text-[10px] text-[--color-text-muted] tabular-nums">
-                    {t.entryEpoch && t.exitEpoch ? formatDuration(Math.round(t.exitEpoch - t.entryEpoch)) : '---'}
-                  </td>
-                  <td className="py-2 pl-1.5 text-center">
-                    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-medium ${
-                      t.exitReason === 'take_profit' ? 'text-emerald-400 bg-emerald-500/10'
-                      : t.exitReason === 'stop_loss' ? 'text-red-400 bg-red-500/10'
-                      : t.exitReason === 'timeout' ? 'text-amber-400 bg-amber-500/10'
-                      : t.exitReason === 'win' ? 'text-emerald-400 bg-emerald-500/5'
-                      : t.exitReason === 'loss' ? 'text-red-400 bg-red-500/5'
-                      : 'text-[--color-text-muted] bg-[--color-bg-active]/50'
-                    }`}>
-                      {t.exitReason === 'take_profit' ? 'TP'
-                      : t.exitReason === 'stop_loss' ? 'SL'
-                      : t.exitReason === 'timeout' ? 'TO'
-                      : t.exitReason ? t.exitReason.slice(0, 4) : '---'}
-                    </span>
-                  </td>
-                </motion.tr>
-              ))}
-            </AnimatePresence>
-          </tbody>
-        </table>
-      </div>
-    </motion.div>
+
+      {/* Table */}
+      {recent.length === 0 ? (
+        <div className="flex items-center justify-center py-6 text-[10px] text-[--color-text-muted]">
+          {todayTrades.length === 0 ? 'No trades today' : 'No matches'}
+        </div>
+      ) : (
+        <div className="max-h-[280px] overflow-y-auto scrollbar-thin">
+          <table className="w-full text-[10px]">
+            <thead>
+              <tr className="text-[--color-text-muted] border-b border-[var(--color-border)] sticky top-0 z-10 bg-[var(--color-bg-elevated)]">
+                <th className="text-left py-1 px-3 font-medium text-[8px] uppercase tracking-wider w-5"></th>
+                <th className="text-left py-1 font-medium text-[8px] uppercase tracking-wider">Time</th>
+                <th className="text-center py-1 font-medium text-[8px] uppercase tracking-wider">Dir</th>
+                <th className="text-right py-1 font-medium text-[8px] uppercase tracking-wider">Entry</th>
+                <th className="text-right py-1 font-medium text-[8px] uppercase tracking-wider">Exit</th>
+                <th className="text-right py-1 font-medium text-[8px] uppercase tracking-wider">PnL</th>
+                <th className="text-center py-1 font-medium text-[8px] uppercase tracking-wider">Dur</th>
+                <th className="text-center py-1 px-3 font-medium text-[8px] uppercase tracking-wider">Result</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recent.map((t) => {
+                const isExpanded = expandedId === t._key;
+                return (
+                  <TradeRow key={t._key} trade={t} isExpanded={isExpanded} onToggle={() => toggleExpand(t._key)} />
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function TradeRow({ trade: t, isExpanded, onToggle }: { trade: any; isExpanded: boolean; onToggle: () => void }) {
+  return (
+    <>
+      <tr
+        onClick={onToggle}
+        className={`border-b border-[var(--color-border)]/10 cursor-pointer transition-colors ${
+          isExpanded ? 'bg-blue-500/[0.06]' : 'hover:bg-blue-500/[0.03]'
+        }`}
+      >
+        <td className="py-1 px-3 text-center">
+          <ChevronRight size={9} className={`text-[--color-text-muted] transition-transform ${isExpanded ? 'rotate-90' : ''}`} />
+        </td>
+        <td className="py-1 font-mono text-[--color-text-muted] whitespace-nowrap">
+          {t.createdAt ? new Date(t.createdAt).toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '---'}
+        </td>
+        <td className="py-1 text-center">
+          <span className={`inline-flex items-center gap-0.5 font-mono font-bold ${
+            t.direction === 'CALL' ? 'text-emerald-400' : 'text-red-400'
+          }`}>
+            {t.direction === 'CALL' ? <ArrowUpRight size={9} /> : <ArrowDownRight size={9} />}
+            {t.direction === 'CALL' ? 'C' : 'P'}
+          </span>
+        </td>
+        <td className="py-1 text-right font-mono tabular-nums">{t.entryPrice?.toFixed(2) ?? '---'}</td>
+        <td className="py-1 text-right font-mono tabular-nums">{t.exitPrice != null ? Number(t.exitPrice).toFixed(2) : '---'}</td>
+        <td className={`py-1 text-right font-mono font-bold tabular-nums ${t.win ? 'text-emerald-400' : 'text-red-400'}`}>
+          {formatPnL(t.pnl)}
+        </td>
+        <td className="py-1 text-center font-mono text-[--color-text-muted] tabular-nums">
+          {t.entryEpoch && t.exitEpoch ? formatDuration(Math.round(t.exitEpoch - t.entryEpoch)) : '---'}
+        </td>
+        <td className="py-1 px-3 text-center">
+          <span className={`inline-flex items-center px-1 py-0.5 rounded text-[8px] font-bold ${
+            t.exitReason === 'take_profit' ? 'text-emerald-400 bg-emerald-500/10'
+            : t.exitReason === 'stop_loss' ? 'text-red-400 bg-red-500/10'
+            : t.exitReason === 'timeout' ? 'text-amber-400 bg-amber-500/10'
+            : t.exitReason === 'win' ? 'text-emerald-400 bg-emerald-500/5'
+            : t.exitReason === 'loss' ? 'text-red-400 bg-red-500/5'
+            : 'text-[--color-text-muted] bg-[--color-bg-active]/50'
+          }`}>
+            {t.exitReason === 'take_profit' ? 'TP'
+            : t.exitReason === 'stop_loss' ? 'SL'
+            : t.exitReason === 'timeout' ? 'TO'
+            : t.exitReason === 'MANUAL_SELL_SOLD' ? 'MAN'
+            : t.exitReason === 'ALREADY_SOLD' ? 'SOLD'
+            : t.exitReason === 'TICK_RESOLVED' ? 'TICK'
+            : t.exitReason ? t.exitReason.slice(0, 4).toUpperCase() : '---'}
+          </span>
+        </td>
+      </tr>
+      {isExpanded && (
+        <tr className="border-b border-[var(--color-border)]/10">
+          <td colSpan={8} className="px-3 py-2 bg-[var(--color-bg-hover)]/30">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-x-4 gap-y-1.5 text-[9px]">
+              <Detail label="Contract ID" value={t.contractId ?? '---'} />
+              <Detail label="Symbol" value={t.symbol} />
+              <Detail label="Stake" value={`$${t.stake}`} />
+              <Detail label="Payout Rate" value={t.payoutRate ? `${(t.payoutRate * 100).toFixed(0)}%` : '---'} />
+              <Detail label="Entry Price" value={t.entryPrice?.toFixed(4) ?? '---'} />
+              <Detail label="Exit Price" value={t.exitPrice != null ? Number(t.exitPrice).toFixed(4) : '---'} />
+              <Detail label="Duration" value={t.entryEpoch && t.exitEpoch ? formatDuration(Math.round(t.exitEpoch - t.entryEpoch)) : '---'} />
+              <Detail label="Exit Reason" value={t.exitReason ?? '---'} />
+              <Detail label="Score" value={t.score != null ? String(t.score) : '---'} />
+              <Detail label="Contract Type" value={t.contractType ?? '---'} />
+              <Detail label="Balance After" value={t.balanceAfter != null ? `$${t.balanceAfter.toFixed(2)}` : '---'} />
+              <Detail label="Dry Run" value={t.dryRun ? 'Yes' : 'No'} />
+              {t.scoreComponents && (
+                <>
+                  <Detail label="RSI" value={String(t.scoreComponents.rsi)} />
+                  <Detail label="BB" value={String(t.scoreComponents.bb)} />
+                  <Detail label="EMA" value={String(t.scoreComponents.ema)} />
+                  <Detail label="ROC" value={String(t.scoreComponents.roc)} />
+                  <Detail label="Momentum" value={String(t.scoreComponents.momentum)} />
+                  <Detail label="Post-Spike" value={String(t.scoreComponents.postSpike)} />
+                </>
+              )}
+            </div>
+          </td>
+        </tr>
+      )}
+    </>
+  );
+}
+
+function Detail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className="text-[--color-text-muted]">{label}:</span>
+      <span className="font-mono text-[--color-text-primary]">{value}</span>
+    </div>
   );
 }
