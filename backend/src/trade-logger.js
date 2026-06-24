@@ -289,6 +289,13 @@ class TradeLogger {
     ).all();
   }
 
+  getSignalsByContractId(contractId) {
+    if (!this.db) this.init();
+    return this.db.prepare(
+      "SELECT * FROM signals WHERE contract_id = ? ORDER BY id DESC"
+    ).all(contractId);
+  }
+
   getTradesToday() {
     if (!this.db) this.init();
     const today = getLocalDateString();

@@ -4,7 +4,7 @@ import { useEffect, useCallback, useRef } from 'react';
 import { getWsClient } from '@/lib/ws-client';
 import { useWsStore } from '@/stores/ws-store';
 import { useBotStore } from '@/stores/bot-store';
-import type { WsMessage, BotStatus, Tick, Indicators, TradeResolvedEvent, TradeExecutedEvent, BotConfig, PaginatedTrades, TodayStats, Signal } from '@/types';
+import type { WsMessage, BotStatus, Tick, Indicators, TradeResolvedEvent, TradeExecutedEvent, BotConfig, PaginatedTrades, TodayStats, Signal, ContractUpdate } from '@/types';
 
 export function useWebSocket() {
   const setConnected = useWsStore((s) => s.setConnected);
@@ -28,6 +28,7 @@ export function useWebSocket() {
   const addSignal = useBotStore((s) => s.addSignal);
   const setSignals = useBotStore((s) => s.setSignals);
   const setSignalStats = useBotStore((s) => s.setSignalStats);
+  const updateActiveContractPnl = useBotStore((s) => s.updateActiveContractPnl);
 
   const fetchHistoricalData = useCallback(() => {
     const client = getWsClient();
@@ -37,6 +38,7 @@ export function useWebSocket() {
     client.send('getDailyReports');
     client.send('getSignals', { limit: 100, offset: 0 });
     client.send('getSignalStats');
+    client.send('getActiveContracts');
     setInitialLoad(true);
   }, [setInitialLoad]);
 
@@ -128,6 +130,10 @@ export function useWebSocket() {
               fetchTimerRef.current = setTimeout(fetchHistoricalData, 500);
             }
           }
+          if (status.activeContracts > 0 && !useBotStore.getState().activeContract) {
+            const client = getWsClient();
+            client.send('getActiveContracts');
+          }
           break;
         case 'tick':
           addTick(msg.data as Tick);
@@ -171,6 +177,33 @@ export function useWebSocket() {
           if (cfg) addTradeResolved(resolved, cfg);
           client.send('getTodayStats');
           client.send('getAllTrades', { page: 1, limit: 200 });
+          break;
+        }
+        case 'activeContracts': {
+          const contracts = msg.data as import('@/types').ActiveContractData[];
+          if (contracts && contracts.length > 0) {
+            const first = contracts[0];
+            setActiveContract({
+              localId: first.localId || '',
+              contractId: first.contractId,
+              direction: first.direction,
+              entryPrice: first.entryPrice,
+              entryTick: first.entryTick,
+              expiryTick: first.expiryTick,
+              stake: first.stake,
+              contractType: first.contractType,
+              multiplier: first.multiplier,
+              stopLoss: first.stopLoss,
+              takeProfit: first.takeProfit,
+              entryEpoch: first.entryEpoch,
+            });
+          } else {
+            setActiveContract(null);
+          }
+          break;
+        }
+        case 'contractUpdate': {
+          updateActiveContractPnl(msg.data as ContractUpdate);
           break;
         }
         case 'signal': {

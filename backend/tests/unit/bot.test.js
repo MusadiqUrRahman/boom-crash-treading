@@ -64,43 +64,9 @@ describe('Bot', () => {
     });
   });
 
-  describe('_resolveDirection', () => {
-    it('returns config direction when dynamicDirection is false', () => {
-      const { bot } = createMockBot();
-      bot.config.dynamicDirection = false;
-      expect(bot._resolveDirection()).toBe('CALL');
-    });
-
-    it('returns PUT when RSI above overbought', () => {
-      const { bot } = createMockBot();
-      bot.config.dynamicDirection = true;
-      bot.config.rsiOverbought = 65;
-      bot.indicatorEngine._cached.rsi = { value: 70 };
-      expect(bot._resolveDirection()).toBe('PUT');
-    });
-
-    it('returns CALL when RSI below oversold', () => {
-      const { bot } = createMockBot();
-      bot.config.dynamicDirection = true;
-      bot.config.rsiOversold = 35;
-      bot.indicatorEngine._cached.rsi = { value: 30 };
-      expect(bot._resolveDirection()).toBe('CALL');
-    });
-
-    it('returns config direction as fallback when RSI not ready', () => {
-      const { bot } = createMockBot();
-      bot.config.dynamicDirection = true;
-      bot.config.direction = 'PUT';
-      bot.indicatorEngine._cached.rsi = null;
-      expect(bot._resolveDirection()).toBe('PUT');
-    });
-
-    it('handles null RSI', () => {
-      const { bot } = createMockBot();
-      bot.indicatorEngine._cached.rsi = null;
-      expect(bot._resolveDirection()).toBe('CALL');
-    });
-  });
+  // NOTE: _resolveDirection() was removed — it was dead code (never called) whose
+  // tests asserted an obsolete RSI implementation. Live direction selection is done
+  // by _evaluateTrade() via dual PUT/CALL scoring (see _evaluateTrade tests below).
 
   describe('_toContractType', () => {
     it('returns PUT for PUT direction', () => {
@@ -330,12 +296,16 @@ describe('Bot', () => {
       expect(bot.state).toBe('COLLECTING');
     });
 
-    it('rejects stale result when not in ENTERING state', () => {
+    it('adopts late result even when ENTERING expired', () => {
       const { bot } = createMockBot();
       bot._executingTrade = true;
+      bot.state = 'SKIP';
       bot.tradeExecutor.sellContract = jest.fn().mockResolvedValue(undefined);
       bot._onTradeExecuted({ success: true, contractId: 'c1', entryPrice: 100, stake: 2 });
-      expect(bot.tradeExecutor.sellContract).toHaveBeenCalledWith('c1');
+      // Must NOT sell the orphan — the contract was bought on Deriv with real money
+      expect(bot.tradeExecutor.sellContract).not.toHaveBeenCalled();
+      // Must adopt the contract and transition to IN_POSITION
+      expect(bot.state).toBe('IN_POSITION');
     });
   });
 

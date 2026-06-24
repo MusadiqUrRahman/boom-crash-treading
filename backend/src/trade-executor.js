@@ -228,7 +228,7 @@ class TradeExecutor {
   }
 
   _subscribeContract(contractId, entryPrice, contractType, stake, multiplier) {
-    const entry = { entryPrice, contractType, resolved: false, subscription: null, stake: (typeof stake === 'number' && stake > 0) ? stake : this.config.stake, multiplier: multiplier || this.config.multiplier, stopLoss: this.config.stopLoss, openedAt: Date.now(), highestPnl: 0, trailDistance: parseFloat(this.config.trailDistance || '0') };
+    const entry = { entryPrice, contractType, resolved: false, subscription: null, stake: (typeof stake === 'number' && stake > 0) ? stake : this.config.stake, multiplier: multiplier || this.config.multiplier, stopLoss: this.config.stopLoss, takeProfit: this.config.takeProfit, openedAt: Date.now(), highestPnl: 0, trailDistance: parseFloat(this.config.trailDistance || '0'), sellFailCount: 0, sellingSince: 0 };
     this._contractStreams.set(contractId, entry);
 
     try {
@@ -244,9 +244,22 @@ class TradeExecutor {
           const poc = resp?.proposal_open_contract;
           if (!poc) return;
 
+          // Selling timeout guard: if sell has been in progress for >30s,
+          // force-resolve from current status rather than staying stuck.
+          if (entry.selling && entry.sellingSince > 0) {
+            const sellingDuration = Date.now() - entry.sellingSince;
+            if (sellingDuration > 30000) {
+              this.logger.error('TradeExecutor', `Contract ${contractId} selling timeout after ${sellingDuration}ms — force-resolving`);
+              entry.selling = false;
+              entry.sellingSince = 0;
+              this._resolveFromStatus(contractId);
+              return;
+            }
+          }
+
           if (poc.is_sold) {
             entry.resolved = true;
-            try { subscription.unsubscribe(); } catch {}
+            try { subscription.unsubscribe(); } catch (e) { this.logger.warn('TradeExecutor', `Stream unsub error for ${contractId}: ${e.message}`); }
             this._resolveContract(contractId, poc, 'AUTO_CLOSE');
             return;
           }
@@ -260,35 +273,44 @@ class TradeExecutor {
             return;
           }
 
-          if (entry.stopLoss && poc.profit !== undefined) {
-            if (entry.openedAt && Date.now() - entry.openedAt < 1000) return;
-            const currentPnl = parseFloat(poc.profit);
+            if (poc.profit !== undefined) {
+              const currentPnl = parseFloat(poc.profit);
 
-            // Track highest PnL for trailing stop
-            if (currentPnl > entry.highestPnl) {
-              entry.highestPnl = currentPnl;
-            }
-
-            // Fixed stop loss: PnL below -stopLoss
-            if (currentPnl <= -entry.stopLoss) {
-              this.logger.warn('TradeExecutor', `Stream SL hit: ${contractId} PnL=${currentPnl.toFixed(4)} <= -${entry.stopLoss.toFixed(2)} — selling`);
-              this.sellContract(contractId).catch(err => {
-                this.logger.error('TradeExecutor', `Stream SL sell failed for ${contractId}: ${err.message}`);
+              // Emit real-time contract update to frontend (actual Deriv PnL)
+              this._emit('contractUpdate', {
+                contractId,
+                profit: currentPnl,
+                spot: poc.spot,
+                bidPrice: poc.bid_price,
+                entryPrice: entry.entryPrice,
+                stake: entry.stake,
+                stopLoss: entry.stopLoss,
+                takeProfit: entry.takeProfit,
+                contractType: entry.contractType,
+                multiplier: entry.multiplier,
+                direction: entry.contractType === 'MULTDOWN' ? 'PUT' : 'CALL',
               });
-              return;
-            }
 
-            // Trailing stop: if profit dropped by trailDistance from highest
-            if (entry.trailDistance > 0 && entry.highestPnl > 0) {
-              const trailTrigger = entry.highestPnl - entry.trailDistance;
-              if (currentPnl <= trailTrigger) {
-                this.logger.warn('TradeExecutor', `Trailing SL hit: ${contractId} PnL=${currentPnl.toFixed(4)} dropped ${(entry.highestPnl - currentPnl).toFixed(4)} from peak ${entry.highestPnl.toFixed(4)} — selling`);
-                this.sellContract(contractId).catch(err => {
-                  this.logger.error('TradeExecutor', `Trailing SL sell failed for ${contractId}: ${err.message}`);
-                });
+              // Track highest PnL for trailing stop
+              if (currentPnl > entry.highestPnl) {
+                entry.highestPnl = currentPnl;
+              }
+
+              // SL/TP is handled by Deriv's limit_order (set via _setStopLossTakeProfit).
+              // The bot does NOT sell on SL/TP — Deriv auto-closes. The 3s watchdog
+              // detects is_sold and resolves the contract cleanly.
+
+              // Trailing stop: if profit dropped by trailDistance from highest
+              if (entry.trailDistance > 0 && entry.highestPnl > 0) {
+                const trailTrigger = entry.highestPnl - entry.trailDistance;
+                if (currentPnl <= trailTrigger) {
+                  this.logger.warn('TradeExecutor', `Trailing SL hit: ${contractId} PnL=${currentPnl.toFixed(4)} dropped ${(entry.highestPnl - currentPnl).toFixed(4)} from peak ${entry.highestPnl.toFixed(4)} — selling`);
+                  this.sellContract(contractId).catch(err => {
+                    this.logger.error('TradeExecutor', `Trailing SL sell failed for ${contractId}: ${err.message}`);
+                  });
+                }
               }
             }
-          }
         },
         error: (err) => {
           this.logger.error('TradeExecutor', `Stream error for ${contractId}: ${err.message}`);
@@ -314,15 +336,59 @@ class TradeExecutor {
           new Promise((_, reject) => setTimeout(() => reject(new Error('Poll timeout')), 5000)),
         ]);
         const poc = resp?.proposal_open_contract;
-        if (poc && poc.is_sold) {
+        if (!poc) {
+          setTimeout(poll, 200);
+          return;
+        }
+
+        if (poc.is_sold) {
           entry.resolved = true;
           this._resolveContract(contractId, poc, 'AUTO_CLOSE_POLL');
           return;
         }
-      } catch {}
-      setTimeout(poll, 1000);
+
+        // Check SL/TP from poll response (same logic as stream handler)
+        if (poc.profit !== undefined) {
+          const currentPnl = parseFloat(poc.profit);
+
+          // Emit real-time contract update
+          this._emit('contractUpdate', {
+            contractId,
+            profit: currentPnl,
+            spot: poc.spot,
+            bidPrice: poc.bid_price,
+            entryPrice: entry.entryPrice,
+            stake: entry.stake,
+            stopLoss: entry.stopLoss,
+            takeProfit: entry.takeProfit,
+            contractType: entry.contractType,
+            multiplier: entry.multiplier,
+            direction: entry.contractType === 'MULTDOWN' ? 'PUT' : 'CALL',
+          });
+
+          if (currentPnl > entry.highestPnl) {
+            entry.highestPnl = currentPnl;
+          }
+
+          // SL/TP is handled by Deriv's limit_order — the bot does NOT sell here.
+          // The 3s watchdog detects is_sold and resolves.
+
+          if (entry.trailDistance > 0 && entry.highestPnl > 0) {
+            const trailTrigger = entry.highestPnl - entry.trailDistance;
+            if (currentPnl <= trailTrigger) {
+              this.logger.warn('TradeExecutor', `Poll trailing SL hit: ${contractId} PnL=${currentPnl.toFixed(4)} dropped from ${entry.highestPnl.toFixed(4)} — selling`);
+              this.sellContract(contractId).catch(err => {
+                this.logger.error('TradeExecutor', `Poll trailing SL sell failed for ${contractId}: ${err.message}`);
+              });
+            }
+          }
+        }
+      } catch (err) {
+        this.logger.error('TradeExecutor', `Poll error for ${contractId}: ${err.message}`);
+      }
+      setTimeout(poll, 200);
     };
-    setTimeout(poll, 1000);
+    setTimeout(poll, 200);
   }
 
   _resolveContract(contractId, poc, exitReason) {
@@ -398,90 +464,107 @@ class TradeExecutor {
     this._emit('contractResolved', result);
   }
 
-  checkPerTickStopLoss(currentPrice) {
-    const now = Date.now();
-    for (const [contractId, entry] of this._contractStreams) {
-      if (entry.resolved || !entry.stopLoss) continue;
-      if (entry.openedAt && now - entry.openedAt < 1000) continue;
-      const pnl = this._computePnL(currentPrice, entry);
-      if (pnl <= -entry.stopLoss) {
-        this.logger.warn('TradeExecutor', `SL hit: ${contractId} PnL=${pnl.toFixed(4)} <= -${entry.stopLoss.toFixed(2)} — selling`);
-        this.sellContract(contractId).catch(err => {
-          this.logger.error('TradeExecutor', `SL sell failed for ${contractId}: ${err.message}`);
-        });
-      }
-    }
-  }
-
-  _computePnL(currentPrice, entry) {
-    if (!entry.multiplier || !entry.entryPrice) return 0;
-    const diff = entry.contractType === 'MULTDOWN'
-      ? entry.entryPrice - currentPrice
-      : currentPrice - entry.entryPrice;
-    return entry.stake * entry.multiplier * diff / entry.entryPrice;
-  }
-
   async sellContract(contractId) {
     const entry = this._contractStreams.get(contractId);
     if (entry && entry.resolved) {
       this.logger.info('TradeExecutor', `Contract ${contractId} already resolved — skipping sell`);
       return;
     }
-
-    // Minimum hold time — prevent immediate sell after open (ALREADY_SOLD bug)
-    const MIN_HOLD_MS = 500; // 0.5 seconds minimum
-    if (entry && entry.openedAt && (Date.now() - entry.openedAt) < MIN_HOLD_MS) {
-      this.logger.warn('TradeExecutor', `Contract ${contractId} too young (${Date.now() - entry.openedAt}ms < ${MIN_HOLD_MS}ms) — skipping sell`);
+    if (entry && entry.selling) {
+      this.logger.warn('TradeExecutor', `Contract ${contractId} sell already in progress — skipping`);
       return;
+    }
+    if (entry) {
+      entry.selling = true;
+      entry.sellingSince = Date.now();
+    }
+
+    // MIN_HOLD_MS removed — was causing SL/TP delays.
+    // Sell is now safe because _resolveContract checks the resolved flag before
+    // processing, and the sell retry mechanism handles transient failures.
+
+    // If this contract has failed to sell >5 times consecutively,
+    // skip the sell attempt and go straight to status-force-resolve.
+    // This prevents the infinite failure loop seen in production
+    // where `@deriv/deriv-api` throws `lastSellError is not defined`
+    // on every sell attempt, keeping the contract in limbo forever.
+    const FAIL_THRESHOLD = 5;
+    const maxFailsExceeded = entry && entry.sellFailCount >= FAIL_THRESHOLD;
+    if (maxFailsExceeded) {
+      this.logger.warn('TradeExecutor', `Contract ${contractId} exceeded ${FAIL_THRESHOLD} sell failures — force-resolving from status instead of retrying sell`);
     }
 
     let sellPrice;
-    try {
-      const statusResp = await Promise.race([
-        this.connectionManager.api.send({
-          proposal_open_contract: 1,
-          contract_id: contractId,
-        }),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Status timed out')), 5000)),
-      ]);
-      sellPrice = statusResp?.proposal_open_contract?.bid_price;
-      sellPrice = sellPrice ? parseFloat(sellPrice) : undefined;
-    } catch {
-      this.logger.warn('TradeExecutor', `Could not fetch bid price for sell: ${contractId}`);
-    }
-
-    try {
-      const sellMsg = { sell: contractId };
-      if (sellPrice) sellMsg.price = sellPrice;
-      const resp = await Promise.race([
-        this.connectionManager.api.send(sellMsg),
-        new Promise((_, reject) => setTimeout(() => reject(new Error('Sell timed out after 5s')), 5000)),
-      ]);
-      if (resp?.sell?.sold_for) {
-        this.logger.info('TradeExecutor', `Contract ${contractId} sold for ${resp.sell.sold_for}`);
-        const poc = resp?.sell?.sold_contract;
-        if (poc) {
-          this._resolveContract(contractId, poc, 'MANUAL_SELL');
-          return;
-        }
-        this.logger.warn('TradeExecutor', `Sell response has no sold_contract — fetching status`);
-        try {
-          const status = await this.connectionManager.api.send({
+    if (!maxFailsExceeded) {
+      try {
+        const statusResp = await Promise.race([
+          this.connectionManager.api.send({
             proposal_open_contract: 1,
             contract_id: contractId,
-          });
-          const statusPoc = status?.proposal_open_contract;
-          if (statusPoc) {
-            this._resolveContract(contractId, statusPoc, 'MANUAL_SELL_SOLD');
-            return;
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Status timed out')), 5000)),
+        ]);
+        sellPrice = statusResp?.proposal_open_contract?.bid_price;
+        sellPrice = sellPrice ? parseFloat(sellPrice) : undefined;
+      } catch {
+        this.logger.warn('TradeExecutor', `Could not fetch bid price for sell: ${contractId}`);
+      }
+    }
+
+    // Sell with retry (3 attempts, 500ms backoff) — skip if max failures exceeded
+    let sellSucceeded = false;
+    if (!maxFailsExceeded) {
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        try {
+          const sellMsg = { sell: contractId };
+          if (sellPrice) sellMsg.price = sellPrice;
+          const resp = await Promise.race([
+            this.connectionManager.api.send(sellMsg),
+            new Promise((_, reject) => setTimeout(() => reject(new Error('Sell timed out after 5s')), 5000)),
+          ]);
+          if (resp?.sell?.sold_for) {
+            this.logger.info('TradeExecutor', `Contract ${contractId} sold for ${resp.sell.sold_for}`);
+            const poc = resp?.sell?.sold_contract;
+            if (poc) {
+              sellSucceeded = true;
+              this._resolveContract(contractId, poc, 'MANUAL_SELL');
+              if (entry) entry.sellFailCount = 0;
+              return;
+            }
+            this.logger.warn('TradeExecutor', `Sell response has no sold_contract — fetching status`);
+            try {
+              const status = await this.connectionManager.api.send({
+                proposal_open_contract: 1,
+                contract_id: contractId,
+              });
+              const statusPoc = status?.proposal_open_contract;
+              if (statusPoc) {
+                sellSucceeded = true;
+                this._resolveContract(contractId, statusPoc, 'MANUAL_SELL_SOLD');
+                if (entry) entry.sellFailCount = 0;
+                return;
+              }
+            } catch (e) {
+              this.logger.error('TradeExecutor', `Status fetch failed after sell: ${e.message}`);
+            }
           }
-        } catch (e) {
-          this.logger.error('TradeExecutor', `Status fetch failed after sell: ${e.message}`);
+          break; // Response received (no error) — no retry needed
+        } catch (err) {
+          const errMsg = (err && err.message) || (typeof err === 'string' ? err : JSON.stringify(err));
+          if (attempt < 3) {
+            this.logger.warn('TradeExecutor', `Sell attempt ${attempt}/3 failed for ${contractId}: ${errMsg} — retrying`);
+            await new Promise(r => setTimeout(r, 500));
+          } else {
+            this.logger.warn('TradeExecutor', `Sell failed for ${contractId} after ${attempt} attempts: ${errMsg}`);
+          }
         }
       }
-    } catch (err) {
-      const errMsg = (err && err.message) || (typeof err === 'string' ? err : JSON.stringify(err));
-      this.logger.warn('TradeExecutor', `Sell failed for ${contractId} (may already be closed): ${errMsg}`);
+    }
+
+    // Increment fail counter if sell didn't succeed
+    if (entry && !sellSucceeded) {
+      entry.sellFailCount = (entry.sellFailCount || 0) + 1;
+      this.logger.warn('TradeExecutor', `Contract ${contractId} sellFailCount=${entry.sellFailCount} — ${entry.sellFailCount >= FAIL_THRESHOLD ? 'exceeded threshold, next trigger will force-resolve' : 'retrying on next trigger'}`);
     }
 
     try {
@@ -496,6 +579,7 @@ class TradeExecutor {
       if (poc && poc.is_sold) {
         this.logger.info('TradeExecutor', `Contract ${contractId} already sold — resolving from status`);
         this._resolveContract(contractId, poc, 'ALREADY_SOLD');
+        if (entry) entry.sellFailCount = 0;
       } else if (poc) {
         // Not yet sold. Prefer Deriv's live `profit`; otherwise use bid_price as a
         // proxy sell price. NEVER substitute 0 (that fabricates a full-stake loss).
@@ -506,12 +590,12 @@ class TradeExecutor {
           forcePoc.sell_price = poc.bid_price;
         }
         this._resolveContract(contractId, forcePoc, 'FORCE_RESOLVE');
+        if (entry) entry.sellFailCount = 0;
       } else {
         this.logger.error('TradeExecutor', `Contract ${contractId} cannot be resolved: sell failed, no status`);
       }
     } catch (err2) {
       this.logger.error('TradeExecutor', `Failed to get contract status for ${contractId}: ${err2.message}`);
-      const entry = this._contractStreams.get(contractId);
       if (entry && !entry.resolved) {
         entry.resolved = true;
         // We genuinely do not know the outcome (Deriv unreachable). DO NOT fabricate
@@ -539,12 +623,57 @@ class TradeExecutor {
         this._cleanupSub(contractId);
       }
     }
+    if (entry) entry.selling = false;
+  }
+
+  async _resolveFromStatus(contractId) {
+    const entry = this._contractStreams.get(contractId);
+    if (!entry || entry.resolved) return;
+    try {
+      const status = await Promise.race([
+        this.connectionManager.api.send({
+          proposal_open_contract: 1,
+          contract_id: contractId,
+        }),
+        new Promise((_, reject) => setTimeout(() => reject(new Error('Status check timed out')), 5000)),
+      ]);
+      const poc = status?.proposal_open_contract;
+      if (poc) {
+        this._resolveContract(contractId, poc, poc.is_sold ? 'ALREADY_SOLD' : 'FORCE_RESOLVE');
+      } else {
+        this.logger.error('TradeExecutor', `_resolveFromStatus: no poc for ${contractId}`);
+        entry.resolved = true;
+        this._emit('contractResolved', {
+          contractId, localId: null, win: null, pnl: null, derivProfit: null,
+          entryPrice: entry.entryPrice, exitPrice: entry.entryPrice,
+          stake: entry.stake || this.config.stake, payout: 0,
+          contractType: entry.contractType || 'MULTUP',
+          entryTick: 0, exitTick: 0, exitReason: 'UNRESOLVED',
+          entryEpoch: Math.floor(Date.now() / 1000) - 10,
+          exitEpoch: Math.floor(Date.now() / 1000),
+        });
+        this._cleanupSub(contractId);
+      }
+    } catch (err) {
+      this.logger.error('TradeExecutor', `_resolveFromStatus failed for ${contractId}: ${err.message}`);
+      entry.resolved = true;
+      this._emit('contractResolved', {
+        contractId, localId: null, win: null, pnl: null, derivProfit: null,
+        entryPrice: entry.entryPrice, exitPrice: entry.entryPrice,
+        stake: entry.stake || this.config.stake, payout: 0,
+        contractType: entry.contractType || 'MULTUP',
+        entryTick: 0, exitTick: 0, exitReason: 'UNRESOLVED',
+        entryEpoch: Math.floor(Date.now() / 1000) - 10,
+        exitEpoch: Math.floor(Date.now() / 1000),
+      });
+      this._cleanupSub(contractId);
+    }
   }
 
   _cleanupSub(contractId) {
     const entry = this._contractStreams.get(contractId);
     if (!entry) return;
-    if (entry.subscription) { try { entry.subscription.unsubscribe(); } catch {} }
+    if (entry.subscription) { try { entry.subscription.unsubscribe(); } catch (e) { this.logger.warn('TradeExecutor', `Unsubscribe error for ${contractId}: ${e.message}`); } }
     this._contractStreams.delete(contractId);
     this._slTpSet.delete(contractId);
   }
@@ -555,12 +684,39 @@ class TradeExecutor {
 
     this.logger.info('TradeExecutor', `Retrying ${pending.length} pending contracts after reconnect`);
     for (const [contractId, entry] of pending) {
-      if (entry.subscription) { try { entry.subscription.unsubscribe(); } catch {} }
+      if (entry.subscription) { try { entry.subscription.unsubscribe(); } catch (e) { this.logger.warn('TradeExecutor', `Unsubscribe error for ${contractId}: ${e.message}`); } }
       this._subscribeContract(contractId, entry.entryPrice, entry.contractType, entry.stake, entry.multiplier);
       if (!this._slTpSet.has(contractId)) {
-        this._setStopLossTakeProfit(contractId).catch(() => {});
+        this._setStopLossTakeProfit(contractId).catch(err => {
+          this.logger.error('TradeExecutor', `Reconnect SL/TP retry failed for ${contractId}: ${err.message}`);
+        });
       }
     }
+  }
+
+  async verifyActiveContracts() {
+    const resolved = [];
+    for (const [contractId, entry] of this._contractStreams) {
+      if (entry.resolved) continue;
+      try {
+        const resp = await Promise.race([
+          this.connectionManager.api.send({
+            proposal_open_contract: 1,
+            contract_id: contractId,
+          }),
+          new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout')), 5000)),
+        ]);
+        const poc = resp?.proposal_open_contract;
+        if (poc && poc.is_sold) {
+          this.logger.warn('TradeExecutor', `Watchdog detected sold contract ${contractId} — resolving`);
+          this._resolveContract(contractId, poc, 'WATCHDOG_CLOSE');
+          resolved.push(contractId);
+        }
+      } catch (err) {
+        this.logger.error('TradeExecutor', `Watchdog check failed for ${contractId}: ${err.message}`);
+      }
+    }
+    return resolved;
   }
 
   getActiveContractIds() {

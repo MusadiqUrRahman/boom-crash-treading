@@ -91,7 +91,7 @@ function loadConfig() {
     maxConsecutiveLosses: parseInt(process.env.MAX_CONSECUTIVE_LOSSES || bestParams?.maxConsecutiveLosses || '5', 10),
     maxDailyLoss: parseFloat(process.env.MAX_DAILY_LOSS || bestParams?.maxDailyLoss || '10'),
     maxDailyTrades: parseInt(process.env.MAX_DAILY_TRADES || bestParams?.maxDailyTrades || '100', 10),
-    maxPositionSize: parseFloat(process.env.MAX_POSITION_SIZE || '2.00'),
+    maxPositionSize: parseFloat(process.env.MAX_POSITION_SIZE || '5.00'),
     maxDailyDrawdown: parseFloat(process.env.MAX_DAILY_DRAWDOWN || '0.10'),
     circuitBreakerCooldownMin: parseInt(process.env.CIRCUIT_BREAKER_COOLDOWN_MIN || '30', 10),
     maxCircuitBreakerTrips: parseInt(process.env.MAX_CIRCUIT_BREAKER_TRIPS || '3', 10),
@@ -104,7 +104,8 @@ function loadConfig() {
     pingInterval: parseInt(process.env.PING_INTERVAL || '30000', 10),
 
     stakeMode: process.env.STAKE_MODE || 'fixed',
-    baseStake: parseFloat(process.env.BASE_STAKE || process.env.STAKE || '0.50'),
+    // Default aligned with .env template (BASE_STAKE=1.00); falls back to STAKE.
+    baseStake: parseFloat(process.env.BASE_STAKE || process.env.STAKE || '1.00'),
     minStake: parseFloat(process.env.MIN_STAKE || '0.35'),
     maxStake: parseFloat(process.env.MAX_STAKE || '2.00'),
     riskPercent: parseFloat(process.env.RISK_PERCENT || '0.005'),
@@ -120,10 +121,14 @@ function loadConfig() {
     multiplier: parseInt(process.env.MULTIPLIER || '500', 10),
     stopLoss: parseFloat(process.env.STOP_LOSS || '0.25'),
     takeProfit: parseFloat(process.env.TAKE_PROFIT || '0.50'),
-    maxMlDurationTicks: parseInt(process.env.MAX_ML_DURATION_TICKS || '10', 10),
+    // Defaults aligned with .env template (MAX_ML_DURATION_TICKS=110,
+    // MAX_ACCEPTABLE_LOSS=2.00) so the fallback matches live behaviour if the key
+    // is ever removed from .env.
+    maxMlDurationTicks: parseInt(process.env.MAX_ML_DURATION_TICKS || '110', 10),
     maxTimeoutExtensions: parseInt(process.env.MAX_TIMEOUT_EXTENSIONS || '1000', 10),
     minProfitToSell: parseFloat(process.env.MIN_PROFIT_TO_SELL || '0.50'),
-    maxAcceptableLoss: parseFloat(process.env.MAX_ACCEPTABLE_LOSS || '0.50'),
+    maxAcceptableLoss: parseFloat(process.env.MAX_ACCEPTABLE_LOSS || '2.00'),
+    trailDistance: parseFloat(process.env.TRAIL_DISTANCE || '0'),
     volatilityThreshold: parseFloat(process.env.VOLATILITY_THRESHOLD || '300'),
     volatilityLookbackTicks: parseInt(process.env.VOLATILITY_LOOKBACK_TICKS || '10', 10),
     maxPositionTicks: parseInt(process.env.MAX_POSITION_TICKS || '110', 10),

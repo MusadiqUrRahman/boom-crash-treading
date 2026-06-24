@@ -109,6 +109,8 @@ class BotWebSocketServer {
     this.wss = null;
     this.clients = new Set();
     this._statusInterval = null;
+    this._todayStatsCache = null;
+    this._todayStatsCacheTs = 0;
   }
 
   start() {
@@ -163,6 +165,11 @@ class BotWebSocketServer {
       if (recentTrades.length > 0) {
         this._send(ws, 'response', { data: recentTrades });
       }
+    }
+
+    const activeContractData = this.bot.getActiveContractData();
+    if (activeContractData && activeContractData.length > 0) {
+      this._send(ws, 'activeContracts', activeContractData);
     }
 
     ws.on('message', (raw) => this._handleMessage(ws, raw));
@@ -260,6 +267,9 @@ class BotWebSocketServer {
         } catch {
           return null;
         }
+      },
+      getActiveContracts: () => {
+        return this.bot.getActiveContractData() || [];
       },
       getHealth: () => {
         return this.bot.getHealth();
@@ -442,6 +452,9 @@ class BotWebSocketServer {
       bot.tradeExecutor.on('tradeError', (errorInfo) => {
         this._broadcast('tradeError', errorInfo);
       });
+      bot.tradeExecutor.on('contractUpdate', (update) => {
+        this._broadcast('contractUpdate', update);
+      });
     }
 
     if (bot.contractMonitor) {
@@ -458,6 +471,9 @@ class BotWebSocketServer {
   }
 
   _getTodayStatsFull() {
+    if (this._todayStatsCache && this._todayStatsCacheTs && Date.now() - this._todayStatsCacheTs < 1000) {
+      return this._todayStatsCache;
+    }
     const now = new Date();
     const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     try {
@@ -487,13 +503,16 @@ class BotWebSocketServer {
       const todayWins = rows.filter(r => r.win).length;
       const todayPnl = rows.reduce((s, r) => s + (r.pnl || 0), 0);
 
-      return {
+      const result = {
         today: { trades: todayTotal, wins: todayWins, losses: todayTotal - todayWins, pnl: Math.round(todayPnl * 100) / 100 },
         thisHour: { ...thisHour, pnl: Math.round(thisHour.pnl * 100) / 100 },
         hourly: Object.fromEntries(
           Object.entries(hourly).map(([h, v]) => [h, { ...v, pnl: Math.round(v.pnl * 100) / 100 }])
         ),
       };
+      this._todayStatsCache = result;
+      this._todayStatsCacheTs = Date.now();
+      return result;
     } catch {
       return { today: { trades: 0, wins: 0, losses: 0, pnl: 0 }, thisHour: { trades: 0, wins: 0, losses: 0, pnl: 0 }, hourly: {} };
     }

@@ -48,12 +48,18 @@ export function ActiveContract() {
   const sellContract = useBotStore((s) => s.sellContract);
   const [sellState, setSellState] = useState<'idle' | 'selling' | 'done' | 'error'>('idle');
   const [sellError, setSellError] = useState('');
+  const [now, setNow] = useState(Date.now());
   const sellDoneTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const contract = activeContract;
   const tick = lastTick;
 
   const elapsed = useElapsed(contract?.entryEpoch);
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
 
   if (!contract) {
     return (
@@ -76,20 +82,33 @@ export function ActiveContract() {
   const currentPrice = tick?.quote ?? 0;
   const entryPrice = contract.entryPrice;
 
-  const rawDiff = currentPrice - entryPrice;
-  const isFavourable = contract.direction === 'CALL' ? currentPrice >= entryPrice : currentPrice <= entryPrice;
+  // Use real Deriv PnL when available (from proposal_open_contract stream).
+  // This is the SINGLE SOURCE OF TRUTH — it matches exactly what the real
+  // Deriv account shows. Only fall back to computed PnL when no stream data
+  // has arrived yet (initial state before first contractUpdate).
+  const hasDerivPnl = contract.derivProfit != null;
+  const pnl = hasDerivPnl ? contract.derivProfit : (() => {
+    const value = contractValue(
+      contract.stake, contract.multiplier, entryPrice, currentPrice,
+      contract.contractType, contract.direction,
+    );
+    return value != null ? value - contract.stake : null;
+  })();
+
+  const rawDiff = hasDerivPnl && contract.derivSpot != null
+    ? contract.derivSpot - entryPrice
+    : currentPrice - entryPrice;
+  const isFavourable = contract.direction === 'CALL' ? rawDiff >= 0 : rawDiff <= 0;
   const directionArrow = isFavourable ? '▲' : '▼';
 
-  const value = contractValue(
-    contract.stake,
-    contract.multiplier,
-    entryPrice,
-    currentPrice,
-    contract.contractType,
-    contract.direction,
-  );
+  // Recompute value for the display row; prefer Deriv source when available
+  const displaySpot = hasDerivPnl && contract.derivSpot != null ? contract.derivSpot : currentPrice;
+  const value = hasDerivPnl && contract.derivBidPrice != null
+    ? contract.stake + contract.derivProfit
+    : contractValue(contract.stake, contract.multiplier, entryPrice, displaySpot, contract.contractType, contract.direction);
 
-  const pnl = value != null ? value - contract.stake : null;
+  // Stale contract detection: if no contractUpdate received for 10+ seconds
+  const isStale = contract.lastUpdate != null && now - contract.lastUpdate > 10_000;
 
   const handleSell = async () => {
     if (sellState !== 'idle' || !contract.contractId) return;
@@ -132,10 +151,12 @@ export function ActiveContract() {
       <div className="px-4 pt-3 pb-2 flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="relative flex h-2 w-2">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-60" />
-            <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+            <span className={`animate-ping absolute inline-flex h-full w-full rounded-full ${isStale ? 'bg-amber-400 opacity-80' : 'bg-green-400 opacity-60'}`} />
+            <span className={`relative inline-flex rounded-full h-2 w-2 ${isStale ? 'bg-amber-500' : 'bg-green-500'}`} />
           </span>
-          <span className="text-[10px] font-semibold text-green-400 tracking-wide">LIVE</span>
+          <span className={`text-[10px] font-semibold tracking-wide ${isStale ? 'text-amber-400' : 'text-green-400'}`}>
+            {isStale ? 'STALE' : 'LIVE'}
+          </span>
         </div>
         <div className="flex items-center gap-2">
           {isMultiplier && (
@@ -172,17 +193,17 @@ export function ActiveContract() {
             {formatCurrency(entryPrice, 2)}
           </span>
         </div>
-        {currentPrice > 0 && (
+        {(displaySpot > 0) && (
           <div className="flex items-baseline justify-between">
             <span className="text-[10px] text-[--color-text-muted] font-medium">Current</span>
             <motion.span
-              key={currentPrice}
+              key={displaySpot}
               initial={{ scale: 1.08 }}
               animate={{ scale: 1 }}
               transition={{ duration: 0.15 }}
               className={`text-[13px] font-mono tabular-nums tracking-tight ${isFavourable ? 'text-emerald-400' : 'text-red-400'}`}
             >
-              {currentPrice.toFixed(2)}
+              {displaySpot.toFixed(2)}
               <span className="ml-1 text-[10px]">{directionArrow}</span>
             </motion.span>
           </div>

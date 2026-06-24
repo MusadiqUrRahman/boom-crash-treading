@@ -118,6 +118,10 @@ export interface ActiveContract {
   stopLoss?: number;
   takeProfit?: number;
   entryEpoch?: number;
+  derivProfit?: number;       // Real Deriv PnL from contractUpdate stream
+  derivSpot?: number;          // Real Deriv spot price
+  derivBidPrice?: number;      // Real Deriv bid price
+  lastUpdate?: number;         // Timestamp of last contractUpdate
 }
 
 export interface TradeExecutedEvent {
@@ -318,7 +322,36 @@ export interface SignalStats {
 export type WsMessageType =
   | 'tick' | 'status' | 'tradeExecuted' | 'tradeResolved'
   | 'stateChange' | 'indicators' | 'error' | 'response' | 'config' | 'ticks' | 'signal'
-  | 'todayStats' | 'signalStats';
+  | 'todayStats' | 'signalStats' | 'activeContracts' | 'contractUpdate';
+
+export interface ContractUpdate {
+  contractId: string;
+  profit: number;
+  spot: number;
+  bidPrice: number;
+  entryPrice: number;
+  stake: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  contractType: string;
+  multiplier: number;
+  direction: 'CALL' | 'PUT';
+}
+
+export interface ActiveContractData {
+  localId: string | null;
+  contractId: string;
+  direction: 'CALL' | 'PUT';
+  entryPrice: number;
+  entryTick: number;
+  expiryTick: number;
+  stake: number;
+  contractType?: string;
+  multiplier?: number;
+  stopLoss?: number;
+  takeProfit?: number;
+  entryEpoch?: number;
+}
 
 export interface WsMessage {
   type: WsMessageType;

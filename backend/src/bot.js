@@ -61,8 +61,9 @@ class Bot extends EventEmitter {
     this._pendingSignalId = null;
     this._lastEntryTickIndex = -1;
     this._enteringTickCount = 0;
-    this._maxEnteringTicks = parseInt(config.maxEnteringTicks || '30', 10);
+    this._maxEnteringTicks = parseInt(config.maxEnteringTicks || '120', 10);
     this._contractIdToLocalId = new Map();
+    this._contractIdToSignalId = new Map();
     this._executingTrade = false;
     this._lastEntryAttemptTick = -1;
     this._lastEntryTickIndex = -1;
@@ -70,6 +71,7 @@ class Bot extends EventEmitter {
     this._maxPositionTicks = parseInt(config.maxPositionTicks || '900', 10);
     this._autoSellTriggered = false;
     this._minTicksBetweenEntries = parseInt(config.minTicksBetweenEntries || '15', 10);
+    this._contractWatchdog = null;
     this._setupListeners();
   }
 
@@ -109,6 +111,8 @@ class Bot extends EventEmitter {
     this.tradeLogger.init();
     await this.restoreSession();
 
+    this._startContractWatchdog();
+
     this._setState(BOT_STATE.DISCONNECTED);
     await this.connectionManager.connect();
   }
@@ -139,6 +143,7 @@ class Bot extends EventEmitter {
       }
     }
 
+    this._stopContractWatchdog();
     this._running = false;
     this._setState(BOT_STATE.STOPPED);
     this.tickStream.stop();
@@ -160,6 +165,24 @@ class Bot extends EventEmitter {
         this.logger.error('Bot', `Failed to check/remove stop.txt: ${err.message}`);
       }
       return false;
+  }
+
+  _startContractWatchdog() {
+    if (this._contractWatchdog) return;
+    this._contractWatchdog = setInterval(() => {
+      if (this.state !== BOT_STATE.IN_POSITION) return;
+      this.tradeExecutor.verifyActiveContracts().catch(err => {
+        this.logger.error('Bot', `Contract watchdog error: ${err.message}`);
+      });
+    }, 3000);
+    this._contractWatchdog.unref();
+  }
+
+  _stopContractWatchdog() {
+    if (this._contractWatchdog) {
+      clearInterval(this._contractWatchdog);
+      this._contractWatchdog = null;
+    }
   }
 
   _setupListeners() {
@@ -284,7 +307,6 @@ class Bot extends EventEmitter {
 
     this.indicatorEngine.update(tick.quote);
     this.contractMonitor.onTick(tick, this.tickIndex);
-    this.tradeExecutor.checkPerTickStopLoss(tick.quote);
     this.riskManager.recordTick(tick.quote);
 
     if (this._paused) {
@@ -337,25 +359,6 @@ class Bot extends EventEmitter {
     return `${y}-${m}-${d}`;
   }
 
-  _resolveDirection() {
-    if (!this.config.dynamicDirection) return this.config.direction;
-
-    const buffer = this.tickStream.getBuffer();
-    const lookback = this.config.directionLookbackTicks || 10;
-
-    if (buffer.length >= lookback) {
-      const recent = buffer.slice(-lookback);
-      const prices = recent.map(t => t.quote);
-      const startPrice = prices[0];
-      const endPrice = prices[prices.length - 1];
-      const trendPct = ((endPrice - startPrice) / startPrice) * 100;
-
-      if (trendPct > 0.01) return 'PUT';
-      if (trendPct < -0.01) return 'CALL';
-    }
-
-    return this.config.direction;
-  }
 
   _evaluateTrade(tick) {
     const indicatorValues = this.indicatorEngine.getAll();
@@ -559,9 +562,11 @@ class Bot extends EventEmitter {
     }
 
     if (this.state !== BOT_STATE.ENTERING) {
-      this.logger.warn('Bot', `Stale trade result (state=${this.state}) — proceeding with contract ${result.contractId}`);
-      this._tradeInProgress = false;
-      this._executingTrade = false;
+      // The ENTERING window expired before the buy result arrived. The contract
+      // was STILL successfully bought on Deriv with real money — we MUST track
+      // it. Do NOT sell it as an orphan (that discards real money). Instead,
+      // adopt the contract now and transition to IN_POSITION.
+      this.logger.warn('Bot', `Late buy result — ENTERING already expired (state=${this.state}) but contract ${result.contractId} was bought on Deriv — adopting`);
     }
 
     const signal = this._currentTrade ? this._currentTrade.signal : null;
@@ -597,7 +602,7 @@ class Bot extends EventEmitter {
 
     const signalId = this._currentTrade?.signalId;
     if (signalId && result.contractId) {
-      this.tradeLogger.updateSignalWithTrade(signalId, null, null, result.contractId, null);
+      this._contractIdToSignalId.set(result.contractId, signalId);
     }
 
     this.emit('tradeExecuted', {
@@ -649,6 +654,11 @@ class Bot extends EventEmitter {
         derivProfit: null,
         reconcileStatus: 'PENDING',
       });
+
+      // Clear signal tracking — this contract won't resolve again
+      this._pendingSignalId = null;
+      if (result.contractId) this._contractIdToSignalId.delete(result.contractId);
+
       this._setState(BOT_STATE.COOLDOWN);
       return;
     }
@@ -687,22 +697,43 @@ class Bot extends EventEmitter {
 
     const tradeId = this.tradeLogger.logTrade(record);
 
+    // Resolve the signal linked to this contract. Priority:
+    // 1. _pendingSignalId (most recent entry, set in _onEnterSignal)
+    // 2. _contractIdToSignalId (stored when contract was bought)
+    // 3. Fallback: search signals table by contract_id
+    let signalToResolve = null;
     if (this._pendingSignalId) {
+      signalToResolve = this._pendingSignalId;
+      this._pendingSignalId = null;
+    } else if (result.contractId && this._contractIdToSignalId.has(result.contractId)) {
+      signalToResolve = this._contractIdToSignalId.get(result.contractId);
+    }
+    if (signalToResolve != null) {
       this.tradeLogger.updateSignalWithTrade(
-        this._pendingSignalId,
-        result.win ? 'WIN' : 'LOSS',
+        signalToResolve,
+        result.win != null ? (result.win ? 'WIN' : 'LOSS') : null,
         result.pnl,
         result.contractId,
         tradeId
       );
-      this._pendingSignalId = null;
+      if (result.contractId) this._contractIdToSignalId.delete(result.contractId);
     } else if (result.contractId) {
+      // Fallback: search by contract_id directly — catches orphaned signals
+      // from prior sessions where the mapping was lost on restart, as well as
+      // signals prematurely marked resolved=1 by the old (pre-Fix-B) code.
       const sigs = this.tradeLogger.getPendingSignals();
-      const match = sigs.find(s => s.contract_id === result.contractId);
+      let match = sigs.find(s => s.contract_id === result.contractId);
+      if (!match) {
+        // Also check resolved=1 signals (orphans from before Fix B)
+        const allSigs = this.tradeLogger.getSignalsByContractId(result.contractId);
+        if (allSigs && allSigs.length > 0) {
+          match = allSigs[0];
+        }
+      }
       if (match) {
         this.tradeLogger.updateSignalWithTrade(
           match.id,
-          result.win ? 'WIN' : 'LOSS',
+          result.win != null ? (result.win ? 'WIN' : 'LOSS') : null,
           result.pnl,
           result.contractId,
           tradeId
@@ -749,6 +780,7 @@ class Bot extends EventEmitter {
         exitReason: result.exitReason,
       });
       this._contractIdToLocalId.delete(contractId);
+      this._contractIdToSignalId.delete(contractId);
     } else {
       // No local mapping (e.g. contract opened in a prior session). The
       // reconciliation script settles orphaned contracts from Deriv's profit_table,
@@ -769,6 +801,29 @@ class Bot extends EventEmitter {
       session: this.sessionTracker.getStatus(),
       liveBalance: this.riskManager.getStatus().balance,
     };
+  }
+
+  getActiveContractData() {
+    const contractIds = this.tradeExecutor.getActiveContractIds();
+    if (contractIds.length === 0) return null;
+    return contractIds.map(cid => {
+      const entry = this.tradeExecutor._contractStreams.get(cid);
+      if (!entry) return null;
+      return {
+        localId: this._contractIdToLocalId.get(cid) || null,
+        contractId: cid,
+        direction: entry.contractType === 'MULTDOWN' ? 'PUT' : 'CALL',
+        entryPrice: entry.entryPrice,
+        entryTick: 0,
+        expiryTick: 0,
+        stake: entry.stake,
+        contractType: entry.contractType,
+        multiplier: entry.multiplier,
+        stopLoss: entry.stopLoss,
+        takeProfit: entry.takeProfit,
+        entryEpoch: Math.floor(entry.openedAt / 1000),
+      };
+    }).filter(Boolean);
   }
 
   getHealth() {

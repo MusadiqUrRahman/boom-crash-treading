@@ -5,7 +5,7 @@ import { getWsClient } from '@/lib/ws-client';
 import type {
   BotState, ConnectionState, RiskStatus, SessionStatus,
   Tick, Indicators, Trade, ActiveContract, BotConfig, ScoreState,
-  PaginatedTrades, TodayStats, Signal, SignalStats,
+  PaginatedTrades, TodayStats, Signal, SignalStats, ContractUpdate,
 } from '@/types';
 
 interface BotStore {
@@ -55,6 +55,7 @@ interface BotStore {
   addSignal: (signal: Signal) => void;
   setSignals: (signals: Signal[]) => void;
   setSignalStats: (stats: SignalStats) => void;
+  updateActiveContractPnl: (update: ContractUpdate) => void;
   sellContract: (contractId: string) => Promise<{ success: boolean; error?: string }>;
 }
 
@@ -119,14 +120,33 @@ export const useBotStore = create<BotStore>((set, get) => ({
   setActiveContract: (contract) => set({ activeContract: contract }),
 
   addTradeFromDb: (incoming) => set((state) => {
-    const existingIds = new Set(state.trades.map(t => t.localId || t.contractId));
-    const newTrades = incoming.filter(t => {
+    const existingKeys = new Map(state.trades.map(t => [t.localId || t.contractId, t]));
+    const newTrades: Trade[] = [];
+
+    for (const t of incoming) {
       const id = t.localId || t.contractId;
-      return id && !existingIds.has(id);
-    });
-    if (newTrades.length === 0) return {};
-    const withKeys = newTrades.map(t => ({ ...t, _key: t._key || nextTradeKey() }));
-    const merged = [...withKeys, ...state.trades];
+      if (!id) continue;
+      const existing = existingKeys.get(id);
+      if (existing) {
+        if (existing.win !== t.win || existing.pnl !== t.pnl || existing.exitPrice !== t.exitPrice || existing.exitReason !== t.exitReason) {
+          existingKeys.set(id, { ...existing, ...t, _key: existing._key });
+        }
+      } else {
+        newTrades.push(t);
+        existingKeys.set(id, t);
+      }
+    }
+
+    if (newTrades.length === 0 && state.trades.every(t => existingKeys.get(t.localId || t.contractId) === t)) return {};
+
+    const front = newTrades.map(t => ({ ...t, _key: t._key || nextTradeKey() }));
+    const rest = state.trades
+      .filter(t => !front.some(f => (f.localId || f.contractId) === (t.localId || t.contractId)))
+      .map(t => {
+        const updated = existingKeys.get(t.localId || t.contractId);
+        return updated !== t ? { ...updated!, _key: t._key } : t;
+      });
+    const merged = [...front, ...rest];
     if (merged.length > MAX_TRADES) merged.splice(MAX_TRADES);
     return { trades: merged };
   }),
@@ -134,11 +154,12 @@ export const useBotStore = create<BotStore>((set, get) => ({
   addTradeResolved: (result, config) => {
     const state = get();
     const id = result.localId || result.contractId;
-    if (!id || state.trades.some(t => (t.localId === id || t.contractId === id))) return;
+    if (!id) return;
     const risk = state.risk;
+    const existing = state.trades.find(t => t.localId === id || t.contractId === id);
 
     const trade: Trade = {
-      _key: nextTradeKey(),
+      _key: existing?._key || nextTradeKey(),
       localId: result.localId,
       contractId: result.contractId,
       symbol: config.symbol,
@@ -156,13 +177,13 @@ export const useBotStore = create<BotStore>((set, get) => ({
       pnl: result.pnl,
       balanceAfter: risk ? risk.balance + result.pnl : null,
       dryRun: config.dryRun,
-      createdAt: new Date().toISOString(),
+      createdAt: existing?.createdAt || new Date().toISOString(),
       contractType: result.contractType,
       exitReason: result.exitReason,
     };
 
     set((s) => ({
-      trades: [trade, ...s.trades].slice(0, MAX_TRADES),
+      trades: [trade, ...s.trades.filter(t => t._key !== trade._key)].slice(0, MAX_TRADES),
       activeContract: null,
     }));
   },
@@ -190,6 +211,20 @@ export const useBotStore = create<BotStore>((set, get) => ({
   setSignals: (signals) => set({ signals: signals.slice(0, MAX_SIGNALS) }),
 
   setSignalStats: (stats) => set({ signalStats: stats }),
+
+  updateActiveContractPnl: (update) => set((state) => {
+    if (!state.activeContract) return {};
+    if (state.activeContract.contractId !== update.contractId) return {};
+    return {
+      activeContract: {
+        ...state.activeContract,
+        derivProfit: update.profit,
+        derivSpot: update.spot,
+        derivBidPrice: update.bidPrice,
+        lastUpdate: Date.now(),
+      },
+    };
+  }),
 
   sellContract: async (contractId) => {
     try {
